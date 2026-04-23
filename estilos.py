@@ -89,7 +89,7 @@ QTabBar::tab {
     margin-right: 4px;
     border-top-left-radius: 8px;
     border-top-right-radius: 8px;
-    min-width: 140px;
+    min-width: 130px;
     font-weight: 600;
 }
 
@@ -171,6 +171,17 @@ QFrame#tarjeta_resumen {
     background-color: #f8fbfd;
     border: 1px solid #e3ecf3;
     border-radius: 10px;
+}
+
+QFrame#preview_pdf_panel {
+    background-color: #f8fbfd;
+    border: 1px dashed #bcccdc;
+    border-radius: 12px;
+}
+
+QLabel#preview_pdf_label {
+    color: #486581;
+    font-size: 12px;
 }
 
 QStatusBar {

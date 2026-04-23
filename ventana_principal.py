@@ -1,6 +1,8 @@
 from pathlib import Path
 
+import fitz
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -36,14 +38,15 @@ class VentanaPrincipal(QMainWindow):
         self.pipeline = PipelineDocumento()
         self.exportador = ExportadorResultados()
         self.resultado_actual = None
+        self.pixmap_preview_original = None
         self.setWindowTitle("Analizador de PDFs")
-        self.resize(1240, 920)
+        self.resize(1260, 940)
         self.setAcceptDrops(True)
         self._construir_interfaz()
 
     def _construir_interfaz(self) -> None:
         contenedor = QWidget()
-        self.setCentralWidget(contenor := contenedor)
+        self.setCentralWidget(contenedor)
 
         layout_principal = QVBoxLayout(contenedor)
         layout_principal.setContentsMargins(20, 20, 20, 20)
@@ -126,11 +129,13 @@ class VentanaPrincipal(QMainWindow):
         self.tabs_principales = QTabWidget()
 
         self.tab_inicio = self._crear_tab_inicio()
+        self.tab_documento = self._crear_tab_documento()
         self.tab_texto_digital = self._crear_tab_texto_digital()
         self.tab_texto_ocr = self._crear_tab_texto_ocr()
         self.tab_texto_por_pagina = self._crear_tab_texto_por_pagina()
 
         self.tabs_principales.addTab(self.tab_inicio, "Inicio")
+        self.tabs_principales.addTab(self.tab_documento, "Documento")
         self.tabs_principales.addTab(self.tab_texto_digital, "Texto digital")
         self.tabs_principales.addTab(self.tab_texto_ocr, "Texto OCR")
         self.tabs_principales.addTab(self.tab_texto_por_pagina, "Texto por página")
@@ -143,6 +148,13 @@ class VentanaPrincipal(QMainWindow):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(16)
 
+        splitter_horizontal = QSplitter(Qt.Horizontal)
+
+        panel_izquierdo = QWidget()
+        layout_izquierdo = QVBoxLayout(panel_izquierdo)
+        layout_izquierdo.setContentsMargins(0, 0, 0, 0)
+        layout_izquierdo.setSpacing(16)
+
         layout_superior = QHBoxLayout()
         layout_superior.setSpacing(16)
 
@@ -152,7 +164,22 @@ class VentanaPrincipal(QMainWindow):
         layout_superior.addWidget(grupo_resumen, 2)
         layout_superior.addWidget(grupo_diagnostico, 1)
 
-        layout.addLayout(layout_superior)
+        layout_izquierdo.addLayout(layout_superior)
+
+        panel_preview = self._crear_panel_preview_pdf()
+        layout_izquierdo.addWidget(panel_preview, 1)
+
+        splitter_horizontal.addWidget(panel_izquierdo)
+        splitter_horizontal.setSizes([900])
+
+        layout.addWidget(splitter_horizontal, 1)
+        return contenedor
+
+    def _crear_tab_documento(self) -> QWidget:
+        contenedor = QWidget()
+        layout = QVBoxLayout(contenedor)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(16)
 
         splitter_vertical = QSplitter(Qt.Vertical)
 
@@ -230,8 +257,33 @@ class VentanaPrincipal(QMainWindow):
         splitter_vertical.setSizes([430, 240])
 
         layout.addWidget(splitter_vertical, 1)
-
         return contenedor
+
+    def _crear_panel_preview_pdf(self) -> QGroupBox:
+        grupo = QGroupBox("Vista previa del PDF")
+        layout = QVBoxLayout(grupo)
+        layout.setSpacing(8)
+
+        descripcion = QLabel("Se muestra la primera página del PDF como miniatura de referencia.")
+        descripcion.setObjectName("diagnostico_secundario")
+        descripcion.setWordWrap(True)
+
+        contenedor_preview = QFrame()
+        contenedor_preview.setObjectName("preview_pdf_panel")
+        layout_preview = QVBoxLayout(contenedor_preview)
+        layout_preview.setContentsMargins(12, 12, 12, 12)
+
+        self.label_preview_pdf = QLabel("Aún no hay vista previa disponible.")
+        self.label_preview_pdf.setObjectName("preview_pdf_label")
+        self.label_preview_pdf.setAlignment(Qt.AlignCenter)
+        self.label_preview_pdf.setMinimumHeight(260)
+        self.label_preview_pdf.setWordWrap(True)
+
+        layout_preview.addWidget(self.label_preview_pdf)
+
+        layout.addWidget(descripcion)
+        layout.addWidget(contenedor_preview, 1)
+        return grupo
 
     def _crear_panel_resumen(self) -> QGroupBox:
         grupo = QGroupBox("Resumen del documento")
@@ -541,6 +593,10 @@ class VentanaPrincipal(QMainWindow):
         self._mostrar_notificacion("El archivo soltado no es un PDF válido.", "error")
         event.ignore()
 
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._actualizar_preview_escalado()
+
     def seleccionar_pdf(self) -> None:
         ruta_archivo, _ = QFileDialog.getOpenFileName(
             self,
@@ -569,6 +625,7 @@ class VentanaPrincipal(QMainWindow):
             )
             self.resultado_actual = resultado
             self._mostrar_resultado(resultado)
+            self._actualizar_preview_pdf(ruta_archivo)
             self._actualizar_estado_exportacion(True)
             self.boton_reextraer_campos.setEnabled(True)
             self._actualizar_progreso(100, "Procesamiento completado.")
@@ -594,6 +651,58 @@ class VentanaPrincipal(QMainWindow):
             QMessageBox.critical(self, "Error inesperado", mensaje)
         finally:
             self.boton_seleccionar.setEnabled(True)
+
+    def _actualizar_preview_pdf(self, ruta_archivo: str) -> None:
+        self.pixmap_preview_original = None
+
+        try:
+            documento = fitz.open(ruta_archivo)
+            if documento.page_count == 0:
+                self.label_preview_pdf.setText("El PDF no contiene páginas.")
+                return
+
+            pagina = documento.load_page(0)
+            matriz = fitz.Matrix(0.55, 0.55)
+            pixmap = pagina.get_pixmap(matrix=matriz, alpha=False)
+
+            formato = QImage.Format_RGB888
+            if pixmap.n == 4:
+                formato = QImage.Format_RGBA8888
+
+            imagen = QImage(
+                pixmap.samples,
+                pixmap.width,
+                pixmap.height,
+                pixmap.stride,
+                formato,
+            ).copy()
+
+            self.pixmap_preview_original = QPixmap.fromImage(imagen)
+            self._actualizar_preview_escalado()
+        except Exception as error:
+            self.label_preview_pdf.setPixmap(QPixmap())
+            self.label_preview_pdf.setText(f"No se pudo generar la vista previa.\n\n{error}")
+        finally:
+            try:
+                documento.close()
+            except Exception:
+                pass
+
+    def _actualizar_preview_escalado(self) -> None:
+        if not self.pixmap_preview_original:
+            return
+
+        ancho = max(220, self.label_preview_pdf.width() - 12)
+        alto = max(260, self.label_preview_pdf.height() - 12)
+
+        pixmap_escalado = self.pixmap_preview_original.scaled(
+            ancho,
+            alto,
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation,
+        )
+        self.label_preview_pdf.setText("")
+        self.label_preview_pdf.setPixmap(pixmap_escalado)
 
     def reextraer_campos_desde_texto_revisado(self) -> None:
         if self.resultado_actual is None:
@@ -965,6 +1074,9 @@ class VentanaPrincipal(QMainWindow):
         self.valor_estado_ocr.setText("OCR no ejecutado")
         self.valor_detalle_ocr.setText("Sin preparación pendiente.")
         self.label_fuente_extraccion.setText("Fuente de extracción: -")
+        self.label_preview_pdf.setPixmap(QPixmap())
+        self.label_preview_pdf.setText("Aún no hay vista previa disponible.")
+        self.pixmap_preview_original = None
         self.texto_completo.setPlainText("")
         self.texto_ocr_completo.setPlainText("")
         self.texto_revisado.setPlainText("")
