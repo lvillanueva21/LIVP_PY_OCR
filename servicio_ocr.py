@@ -9,7 +9,8 @@ from procesador_imagen import ProcesadorImagen
 class ServicioOCR:
     def __init__(self) -> None:
         self.motor_ocr = "Tesseract OCR local"
-        self.idioma_ocr = "eng"
+        self.idioma_ocr = "spa+eng"
+        pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
     def esta_configurado(self) -> bool:
         try:

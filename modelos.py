@@ -27,6 +27,7 @@ class ResultadoAnalisisPDF:
     necesita_ocr: bool
     texto_completo: str = ""
     texto_ocr_completo: str = ""
+    texto_final_revisado: str = ""
     diagnostico_general: str = "Sin análisis"
     codigo_diagnostico_general: str = "sin_analisis"
     detalle_diagnostico: str = ""

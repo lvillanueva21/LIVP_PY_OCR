@@ -39,6 +39,7 @@ class PipelineDocumento:
 
         if not resultado.apto_para_ocr:
             resultado.ocr_disponible = self.servicio_ocr.esta_configurado()
+            self._preparar_texto_revision(resultado)
             self._emitir_progreso(callback, 100, "Análisis completado. OCR no requerido.")
             return resultado
 
@@ -51,6 +52,7 @@ class PipelineDocumento:
             )
             resultado.motor_ocr = "Tesseract OCR local (no disponible)"
             resultado.ocr_disponible = False
+            self._preparar_texto_revision(resultado)
             self._emitir_progreso(callback, 100, "Análisis completado. OCR no disponible.")
             return resultado
 
@@ -65,6 +67,8 @@ class PipelineDocumento:
             resultado.detalle_ocr,
             acciones_preparacion,
         )
+
+        self._preparar_texto_revision(resultado)
 
         mensaje_final = "Procesamiento completado."
         if resultado.codigo_estado_ocr == "ejecutado":
@@ -87,6 +91,25 @@ class PipelineDocumento:
 
         acciones_texto = " | ".join(acciones_preparacion)
         return f"{detalle_base} Preparación sugerida: {acciones_texto}."
+
+    def _preparar_texto_revision(self, resultado: ResultadoAnalisisPDF) -> None:
+        bloques = []
+
+        for pagina in resultado.resumen_paginas:
+            if pagina.texto_ocr.strip():
+                pagina.texto_preferido = pagina.texto_ocr.strip()
+            elif pagina.texto_extraido.strip():
+                pagina.texto_preferido = pagina.texto_extraido.strip()
+            else:
+                pagina.texto_preferido = ""
+
+            if pagina.texto_preferido:
+                bloques.append(
+                    f"===== PÁGINA {pagina.numero_pagina} =====\n{pagina.texto_preferido}"
+                )
+
+        resultado.texto_base_revision = "\n\n".join(bloques).strip()
+        resultado.texto_revisado = resultado.texto_base_revision
 
     def _emitir_progreso(self, callback, valor: int, mensaje: str) -> None:
         if callback:

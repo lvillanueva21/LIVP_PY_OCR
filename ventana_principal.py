@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
@@ -24,6 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from exportador_resultados import ExportadorResultados
 from pipeline_documento import PipelineDocumento
 
 
@@ -31,9 +34,11 @@ class VentanaPrincipal(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.pipeline = PipelineDocumento()
+        self.exportador = ExportadorResultados()
         self.resultado_actual = None
         self.setWindowTitle("Analizador de PDFs")
-        self.resize(1220, 880)
+        self.resize(1240, 900)
+        self.setAcceptDrops(True)
         self._construir_interfaz()
 
     def _construir_interfaz(self) -> None:
@@ -45,9 +50,8 @@ class VentanaPrincipal(QMainWindow):
         layout_principal.setSpacing(16)
 
         self._crear_encabezado(layout_principal)
-        self._crear_panel_seleccion(layout_principal)
-        self._crear_panel_superior(layout_principal)
-        self._crear_panel_central(layout_principal)
+        self._crear_panel_archivo(layout_principal)
+        self._crear_tabs_principales(layout_principal)
         self._crear_panel_notificacion(layout_principal)
 
         barra_estado = QStatusBar()
@@ -59,7 +63,7 @@ class VentanaPrincipal(QMainWindow):
         titulo.setObjectName("titulo_principal")
 
         subtitulo = QLabel(
-            "Carga un PDF y revisa si contiene texto digital, si es mixto o si probablemente requerirá OCR."
+            "Carga un PDF, arrástralo a la ventana o suéltalo aquí para revisar texto digital, OCR y versión final revisada."
         )
         subtitulo.setObjectName("subtitulo")
         subtitulo.setWordWrap(True)
@@ -67,7 +71,7 @@ class VentanaPrincipal(QMainWindow):
         layout_padre.addWidget(titulo)
         layout_padre.addWidget(subtitulo)
 
-    def _crear_panel_seleccion(self, layout_padre: QVBoxLayout) -> None:
+    def _crear_panel_archivo(self, layout_padre: QVBoxLayout) -> None:
         grupo = QGroupBox("Archivo PDF")
         layout_principal = QVBoxLayout(grupo)
         layout_principal.setSpacing(10)
@@ -76,14 +80,24 @@ class VentanaPrincipal(QMainWindow):
         fila_superior.setSpacing(10)
 
         self.input_ruta = QLineEdit()
-        self.input_ruta.setPlaceholderText("Selecciona un archivo PDF...")
+        self.input_ruta.setPlaceholderText("Selecciona o arrastra un archivo PDF...")
         self.input_ruta.setReadOnly(True)
 
         self.boton_seleccionar = QPushButton("Seleccionar PDF")
         self.boton_seleccionar.clicked.connect(self.seleccionar_pdf)
 
+        self.boton_exportar_json = QPushButton("Exportar JSON")
+        self.boton_exportar_json.clicked.connect(self.exportar_json)
+        self.boton_exportar_json.setEnabled(False)
+
+        self.boton_exportar_txt = QPushButton("Exportar TXT")
+        self.boton_exportar_txt.clicked.connect(self.exportar_txt)
+        self.boton_exportar_txt.setEnabled(False)
+
         fila_superior.addWidget(self.input_ruta, 1)
         fila_superior.addWidget(self.boton_seleccionar)
+        fila_superior.addWidget(self.boton_exportar_json)
+        fila_superior.addWidget(self.boton_exportar_txt)
 
         fila_progreso = QHBoxLayout()
         fila_progreso.setSpacing(10)
@@ -99,12 +113,36 @@ class VentanaPrincipal(QMainWindow):
         fila_progreso.addWidget(self.label_progreso, 1)
         fila_progreso.addWidget(self.barra_progreso, 2)
 
+        etiqueta_drop = QLabel("También puedes arrastrar y soltar un PDF sobre la ventana.")
+        etiqueta_drop.setObjectName("diagnostico_secundario")
+
         layout_principal.addLayout(fila_superior)
         layout_principal.addLayout(fila_progreso)
+        layout_principal.addWidget(etiqueta_drop)
 
         layout_padre.addWidget(grupo)
 
-    def _crear_panel_superior(self, layout_padre: QVBoxLayout) -> None:
+    def _crear_tabs_principales(self, layout_padre: QVBoxLayout) -> None:
+        self.tabs_principales = QTabWidget()
+
+        self.tab_inicio = self._crear_tab_inicio()
+        self.tab_texto_digital = self._crear_tab_texto_digital()
+        self.tab_texto_ocr = self._crear_tab_texto_ocr()
+        self.tab_texto_por_pagina = self._crear_tab_texto_por_pagina()
+
+        self.tabs_principales.addTab(self.tab_inicio, "Inicio")
+        self.tabs_principales.addTab(self.tab_texto_digital, "Texto digital")
+        self.tabs_principales.addTab(self.tab_texto_ocr, "Texto OCR")
+        self.tabs_principales.addTab(self.tab_texto_por_pagina, "Texto por página")
+
+        layout_padre.addWidget(self.tabs_principales, 1)
+
+    def _crear_tab_inicio(self) -> QWidget:
+        contenedor = QWidget()
+        layout = QVBoxLayout(contenedor)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(16)
+
         layout_superior = QHBoxLayout()
         layout_superior.setSpacing(16)
 
@@ -114,7 +152,39 @@ class VentanaPrincipal(QMainWindow):
         layout_superior.addWidget(grupo_resumen, 2)
         layout_superior.addWidget(grupo_diagnostico, 1)
 
-        layout_padre.addLayout(layout_superior)
+        layout.addLayout(layout_superior)
+
+        grupo_paginas = QGroupBox("Detalle por página")
+        layout_paginas = QVBoxLayout(grupo_paginas)
+
+        self.tabla_paginas = QTableWidget(0, 6)
+        self.tabla_paginas.setHorizontalHeaderLabels(
+            [
+                "Página",
+                "Texto",
+                "Caracteres",
+                "Imágenes",
+                "Cobertura imagen",
+                "Diagnóstico",
+            ]
+        )
+        self.tabla_paginas.verticalHeader().setVisible(False)
+        self.tabla_paginas.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.tabla_paginas.setSelectionBehavior(QTableWidget.SelectRows)
+        self.tabla_paginas.setSelectionMode(QTableWidget.SingleSelection)
+        self.tabla_paginas.setAlternatingRowColors(True)
+        self.tabla_paginas.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.tabla_paginas.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.tabla_paginas.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.tabla_paginas.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.tabla_paginas.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self.tabla_paginas.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)
+        self.tabla_paginas.horizontalHeader().setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+
+        layout_paginas.addWidget(self.tabla_paginas)
+        layout.addWidget(grupo_paginas, 1)
+
+        return contenedor
 
     def _crear_panel_resumen(self) -> QGroupBox:
         grupo = QGroupBox("Resumen del documento")
@@ -221,78 +291,118 @@ class VentanaPrincipal(QMainWindow):
 
         return grupo
 
-    def _crear_panel_central(self, layout_padre: QVBoxLayout) -> None:
-        self.pestanas_centrales = QTabWidget()
-
-        tab_detalle = self._crear_tab_detalle_paginas()
-        tab_texto = self._crear_tab_texto()
-
-        self.pestanas_centrales.addTab(tab_detalle, "Detalle por página")
-        self.pestanas_centrales.addTab(tab_texto, "Texto extraído")
-
-        layout_padre.addWidget(self.pestanas_centrales, 1)
-
-    def _crear_tab_detalle_paginas(self) -> QWidget:
+    def _crear_tab_texto_digital(self) -> QWidget:
         contenedor = QWidget()
         layout = QVBoxLayout(contenedor)
         layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(10)
 
-        self.tabla_paginas = QTableWidget(0, 6)
-        self.tabla_paginas.setHorizontalHeaderLabels(
-            [
-                "Página",
-                "Texto",
-                "Caracteres",
-                "Imágenes",
-                "Cobertura imagen",
-                "Diagnóstico",
-            ]
-        )
-        self.tabla_paginas.verticalHeader().setVisible(False)
-        self.tabla_paginas.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.tabla_paginas.setSelectionBehavior(QTableWidget.SelectRows)
-        self.tabla_paginas.setSelectionMode(QTableWidget.SingleSelection)
-        self.tabla_paginas.setAlternatingRowColors(True)
-        self.tabla_paginas.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self.tabla_paginas.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self.tabla_paginas.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        self.tabla_paginas.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        self.tabla_paginas.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
-        self.tabla_paginas.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)
-        self.tabla_paginas.horizontalHeader().setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        fila_botones = QHBoxLayout()
+        fila_botones.setSpacing(10)
 
-        layout.addWidget(self.tabla_paginas)
-        return contenedor
+        self.boton_copiar_digital = QPushButton("Copiar texto digital")
+        self.boton_copiar_digital.clicked.connect(self.copiar_texto_digital)
 
-    def _crear_tab_texto(self) -> QWidget:
-        contenedor = QWidget()
-        layout = QVBoxLayout(contenedor)
-        layout.setContentsMargins(8, 8, 8, 8)
+        self.boton_usar_digital = QPushButton("Usar digital como base")
+        self.boton_usar_digital.clicked.connect(self.usar_texto_digital_como_base)
 
-        self.pestanas_texto = QTabWidget()
+        self.boton_copiar_revisado = QPushButton("Copiar texto revisado")
+        self.boton_copiar_revisado.clicked.connect(self.copiar_texto_revisado)
 
-        pestaña_texto_digital = QWidget()
-        layout_digital = QVBoxLayout(pestaña_texto_digital)
-        layout_digital.setContentsMargins(8, 8, 8, 8)
+        self.boton_guardar_revisado = QPushButton("Guardar texto revisado")
+        self.boton_guardar_revisado.clicked.connect(self.guardar_texto_revisado)
+
+        fila_botones.addWidget(self.boton_copiar_digital)
+        fila_botones.addWidget(self.boton_usar_digital)
+        fila_botones.addWidget(self.boton_copiar_revisado)
+        fila_botones.addWidget(self.boton_guardar_revisado)
+        fila_botones.addStretch()
+
+        splitter = QSplitter(Qt.Horizontal)
+
+        panel_digital = QWidget()
+        layout_digital = QVBoxLayout(panel_digital)
+        layout_digital.setContentsMargins(0, 0, 0, 0)
+        layout_digital.setSpacing(6)
+
+        label_digital = QLabel("Texto digital extraído")
+        label_digital.setObjectName("etiqueta_seccion")
 
         self.texto_completo = QPlainTextEdit()
         self.texto_completo.setReadOnly(True)
         self.texto_completo.setPlaceholderText("Aquí se mostrará el texto digital extraído del documento.")
+
+        layout_digital.addWidget(label_digital)
         layout_digital.addWidget(self.texto_completo)
 
-        pestaña_texto_ocr = QWidget()
-        layout_ocr = QVBoxLayout(pestaña_texto_ocr)
-        layout_ocr.setContentsMargins(8, 8, 8, 8)
+        panel_revisado = QWidget()
+        layout_revisado = QVBoxLayout(panel_revisado)
+        layout_revisado.setContentsMargins(0, 0, 0, 0)
+        layout_revisado.setSpacing(6)
+
+        label_revisado = QLabel("Texto final revisado")
+        label_revisado.setObjectName("etiqueta_seccion")
+
+        descripcion_revisado = QLabel(
+            "Edita aquí la versión final que usarás más adelante para extracción de campos."
+        )
+        descripcion_revisado.setObjectName("diagnostico_secundario")
+        descripcion_revisado.setWordWrap(True)
+
+        self.texto_revisado = QPlainTextEdit()
+        self.texto_revisado.setPlaceholderText("Aquí podrás corregir y consolidar el texto final revisado.")
+        self.texto_revisado.textChanged.connect(self._sincronizar_texto_revisado)
+
+        layout_revisado.addWidget(label_revisado)
+        layout_revisado.addWidget(descripcion_revisado)
+        layout_revisado.addWidget(self.texto_revisado)
+
+        splitter.addWidget(panel_digital)
+        splitter.addWidget(panel_revisado)
+        splitter.setSizes([520, 520])
+
+        layout.addLayout(fila_botones)
+        layout.addWidget(splitter, 1)
+
+        return contenedor
+
+    def _crear_tab_texto_ocr(self) -> QWidget:
+        contenedor = QWidget()
+        layout = QVBoxLayout(contenedor)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(10)
+
+        fila_botones = QHBoxLayout()
+        fila_botones.setSpacing(10)
+
+        self.boton_copiar_ocr = QPushButton("Copiar texto OCR")
+        self.boton_copiar_ocr.clicked.connect(self.copiar_texto_ocr)
+
+        self.boton_usar_ocr = QPushButton("Usar OCR como base")
+        self.boton_usar_ocr.clicked.connect(self.usar_texto_ocr_como_base)
+
+        fila_botones.addWidget(self.boton_copiar_ocr)
+        fila_botones.addWidget(self.boton_usar_ocr)
+        fila_botones.addStretch()
+
+        label_ocr = QLabel("Texto OCR extraído")
+        label_ocr.setObjectName("etiqueta_seccion")
 
         self.texto_ocr_completo = QPlainTextEdit()
         self.texto_ocr_completo.setReadOnly(True)
         self.texto_ocr_completo.setPlaceholderText("Aquí se mostrará el texto OCR obtenido del documento.")
-        layout_ocr.addWidget(self.texto_ocr_completo)
 
-        pestaña_texto_por_pagina = QWidget()
-        layout_por_pagina = QVBoxLayout(pestaña_texto_por_pagina)
-        layout_por_pagina.setContentsMargins(8, 8, 8, 8)
-        layout_por_pagina.setSpacing(8)
+        layout.addLayout(fila_botones)
+        layout.addWidget(label_ocr)
+        layout.addWidget(self.texto_ocr_completo, 1)
+
+        return contenedor
+
+    def _crear_tab_texto_por_pagina(self) -> QWidget:
+        contenedor = QWidget()
+        layout = QVBoxLayout(contenedor)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
 
         fila_selector = QHBoxLayout()
         etiqueta_selector = QLabel("Página:")
@@ -305,7 +415,7 @@ class VentanaPrincipal(QMainWindow):
         fila_selector.addWidget(self.selector_pagina)
         fila_selector.addStretch()
 
-        splitter = QSplitter(Qt.Vertical)
+        splitter = QSplitter(Qt.Horizontal)
 
         panel_digital = QWidget()
         layout_panel_digital = QVBoxLayout(panel_digital)
@@ -337,16 +447,11 @@ class VentanaPrincipal(QMainWindow):
 
         splitter.addWidget(panel_digital)
         splitter.addWidget(panel_ocr)
-        splitter.setSizes([300, 300])
+        splitter.setSizes([520, 520])
 
-        layout_por_pagina.addLayout(fila_selector)
-        layout_por_pagina.addWidget(splitter)
+        layout.addLayout(fila_selector)
+        layout.addWidget(splitter, 1)
 
-        self.pestanas_texto.addTab(pestaña_texto_digital, "Texto digital")
-        self.pestanas_texto.addTab(pestaña_texto_ocr, "Texto OCR")
-        self.pestanas_texto.addTab(pestaña_texto_por_pagina, "Texto por página")
-
-        layout.addWidget(self.pestanas_texto)
         return contenedor
 
     def _crear_panel_notificacion(self, layout_padre: QVBoxLayout) -> None:
@@ -368,6 +473,27 @@ class VentanaPrincipal(QMainWindow):
 
         layout_padre.addWidget(panel)
 
+    def dragEnterEvent(self, event) -> None:
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                if url.isLocalFile() and url.toLocalFile().lower().endswith(".pdf"):
+                    event.acceptProposedAction()
+                    return
+        event.ignore()
+
+    def dropEvent(self, event) -> None:
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                if url.isLocalFile():
+                    ruta_archivo = url.toLocalFile()
+                    if ruta_archivo.lower().endswith(".pdf"):
+                        self._procesar_pdf(ruta_archivo)
+                        event.acceptProposedAction()
+                        return
+
+        self._mostrar_notificacion("El archivo soltado no es un PDF válido.", "error")
+        event.ignore()
+
     def seleccionar_pdf(self) -> None:
         ruta_archivo, _ = QFileDialog.getOpenFileName(
             self,
@@ -381,6 +507,9 @@ class VentanaPrincipal(QMainWindow):
             self.statusBar().showMessage("Selección cancelada.")
             return
 
+        self._procesar_pdf(ruta_archivo)
+
+    def _procesar_pdf(self, ruta_archivo: str) -> None:
         self.input_ruta.setText(ruta_archivo)
         self._actualizar_progreso(0, "Iniciando procesamiento...")
         self._mostrar_notificacion("Procesando documento seleccionado...", "alerta")
@@ -393,6 +522,7 @@ class VentanaPrincipal(QMainWindow):
             )
             self.resultado_actual = resultado
             self._mostrar_resultado(resultado)
+            self._actualizar_estado_exportacion(True)
             self._actualizar_progreso(100, "Procesamiento completado.")
             self._mostrar_notificacion("El documento fue analizado correctamente.", "ok")
         except FileNotFoundError as error:
@@ -417,11 +547,162 @@ class VentanaPrincipal(QMainWindow):
         finally:
             self.boton_seleccionar.setEnabled(True)
 
+    def exportar_json(self) -> None:
+        if self.resultado_actual is None:
+            QMessageBox.information(self, "Sin resultados", "Primero debes analizar un documento.")
+            return
+
+        ruta = self._solicitar_ruta_exportacion("json")
+        if not ruta:
+            return
+
+        try:
+            self.exportador.exportar_json(self.resultado_actual, ruta)
+            self._mostrar_notificacion("Exportación JSON completada correctamente.", "ok")
+            self.statusBar().showMessage(f"Archivo JSON guardado en: {ruta}")
+        except Exception as error:
+            mensaje = f"No se pudo exportar el archivo JSON. Detalle: {error}"
+            self._mostrar_notificacion(mensaje, "error")
+            QMessageBox.critical(self, "Error al exportar JSON", mensaje)
+
+    def exportar_txt(self) -> None:
+        if self.resultado_actual is None:
+            QMessageBox.information(self, "Sin resultados", "Primero debes analizar un documento.")
+            return
+
+        ruta = self._solicitar_ruta_exportacion("txt")
+        if not ruta:
+            return
+
+        try:
+            self.exportador.exportar_txt(self.resultado_actual, ruta)
+            self._mostrar_notificacion("Exportación TXT completada correctamente.", "ok")
+            self.statusBar().showMessage(f"Archivo TXT guardado en: {ruta}")
+        except Exception as error:
+            mensaje = f"No se pudo exportar el archivo TXT. Detalle: {error}"
+            self._mostrar_notificacion(mensaje, "error")
+            QMessageBox.critical(self, "Error al exportar TXT", mensaje)
+
+    def _solicitar_ruta_exportacion(self, formato: str) -> str:
+        if self.resultado_actual is None:
+            return ""
+
+        nombre_base = Path(self.resultado_actual.nombre_archivo).stem
+        nombre_sugerido = f"analisis_{nombre_base}.{formato}"
+
+        if formato == "json":
+            filtro = "Archivos JSON (*.json)"
+            titulo = "Guardar análisis como JSON"
+        else:
+            filtro = "Archivos de texto (*.txt)"
+            titulo = "Guardar análisis como TXT"
+
+        ruta, _ = QFileDialog.getSaveFileName(
+            self,
+            titulo,
+            nombre_sugerido,
+            filtro,
+        )
+
+        if not ruta:
+            return ""
+
+        ruta_path = Path(ruta)
+        if ruta_path.suffix.lower() != f".{formato}":
+            ruta_path = ruta_path.with_suffix(f".{formato}")
+
+        return str(ruta_path)
+
+    def copiar_texto_digital(self) -> None:
+        self._copiar_al_portapapeles(self.texto_completo.toPlainText(), "texto digital")
+
+    def copiar_texto_ocr(self) -> None:
+        self._copiar_al_portapapeles(self.texto_ocr_completo.toPlainText(), "texto OCR")
+
+    def copiar_texto_revisado(self) -> None:
+        self._copiar_al_portapapeles(self.texto_revisado.toPlainText(), "texto revisado")
+
+    def usar_texto_digital_como_base(self) -> None:
+        texto = self.texto_completo.toPlainText().strip()
+        if not texto:
+            QMessageBox.information(self, "Sin texto digital", "No hay texto digital disponible para usar como base.")
+            return
+
+        self.texto_revisado.blockSignals(True)
+        self.texto_revisado.setPlainText(texto)
+        self.texto_revisado.blockSignals(False)
+        self._sincronizar_texto_revisado()
+        self._mostrar_notificacion("Se cargó el texto digital como base del texto revisado.", "ok")
+
+    def usar_texto_ocr_como_base(self) -> None:
+        texto = self.texto_ocr_completo.toPlainText().strip()
+        if not texto:
+            QMessageBox.information(self, "Sin texto OCR", "No hay texto OCR disponible para usar como base.")
+            return
+
+        self.texto_revisado.blockSignals(True)
+        self.texto_revisado.setPlainText(texto)
+        self.texto_revisado.blockSignals(False)
+        self._sincronizar_texto_revisado()
+        self._mostrar_notificacion("Se cargó el texto OCR como base del texto revisado.", "ok")
+
+    def guardar_texto_revisado(self) -> None:
+        if self.resultado_actual is None:
+            QMessageBox.information(self, "Sin resultados", "Primero debes analizar un documento.")
+            return
+
+        texto = self.texto_revisado.toPlainText().strip()
+        if not texto:
+            QMessageBox.information(self, "Sin texto revisado", "No hay texto revisado para guardar.")
+            return
+
+        nombre_base = Path(self.resultado_actual.nombre_archivo).stem
+        nombre_sugerido = f"texto_revisado_{nombre_base}.txt"
+
+        ruta, _ = QFileDialog.getSaveFileName(
+            self,
+            "Guardar texto revisado",
+            nombre_sugerido,
+            "Archivos de texto (*.txt)",
+        )
+
+        if not ruta:
+            return
+
+        ruta_path = Path(ruta)
+        if ruta_path.suffix.lower() != ".txt":
+            ruta_path = ruta_path.with_suffix(".txt")
+
+        try:
+            ruta_path.write_text(texto, encoding="utf-8")
+            self._mostrar_notificacion("Texto revisado guardado correctamente.", "ok")
+            self.statusBar().showMessage(f"Texto revisado guardado en: {ruta_path}")
+        except Exception as error:
+            mensaje = f"No se pudo guardar el texto revisado. Detalle: {error}"
+            self._mostrar_notificacion(mensaje, "error")
+            QMessageBox.critical(self, "Error al guardar texto revisado", mensaje)
+
+    def _copiar_al_portapapeles(self, texto: str, descripcion: str) -> None:
+        if not texto.strip():
+            QMessageBox.information(self, "Sin contenido", f"No hay {descripcion} para copiar.")
+            return
+
+        QApplication.clipboard().setText(texto)
+        self._mostrar_notificacion(f"Se copió el {descripcion} al portapapeles.", "ok")
+
+    def _sincronizar_texto_revisado(self) -> None:
+        if self.resultado_actual is not None:
+            self.resultado_actual.texto_final_revisado = self.texto_revisado.toPlainText()
+
     def _actualizar_progreso(self, valor: int, mensaje: str) -> None:
         self.barra_progreso.setValue(max(0, min(100, valor)))
         self.label_progreso.setText(mensaje)
         self.statusBar().showMessage(mensaje)
         QApplication.processEvents()
+
+    def _actualizar_estado_exportacion(self, habilitado: bool) -> None:
+        self.boton_exportar_json.setEnabled(habilitado)
+        self.boton_exportar_txt.setEnabled(habilitado)
 
     def _mostrar_resultado(self, resultado) -> None:
         self.valor_nombre.setText(resultado.nombre_archivo)
@@ -498,9 +779,9 @@ class VentanaPrincipal(QMainWindow):
             self.tabla_paginas.setItem(fila, 4, item_cobertura)
             self.tabla_paginas.setItem(fila, 5, item_diagnostico)
 
-        self._cargar_texto_extraido(resultado)
+        self._cargar_textos(resultado)
 
-    def _cargar_texto_extraido(self, resultado) -> None:
+    def _cargar_textos(self, resultado) -> None:
         self.selector_pagina.blockSignals(True)
         self.selector_pagina.clear()
 
@@ -517,6 +798,14 @@ class VentanaPrincipal(QMainWindow):
             self.texto_ocr_completo.setPlainText(
                 f"{resultado.estado_ocr}\n\n{resultado.detalle_ocr}"
             )
+
+        if not resultado.texto_final_revisado.strip():
+            base_inicial = resultado.texto_completo.strip() or resultado.texto_ocr_completo.strip()
+            resultado.texto_final_revisado = base_inicial
+
+        self.texto_revisado.blockSignals(True)
+        self.texto_revisado.setPlainText(resultado.texto_final_revisado)
+        self.texto_revisado.blockSignals(False)
 
         for pagina in resultado.resumen_paginas:
             self.selector_pagina.addItem(f"Página {pagina.numero_pagina}")
@@ -589,6 +878,7 @@ class VentanaPrincipal(QMainWindow):
         self.valor_detalle_ocr.setText("Sin preparación pendiente.")
         self.texto_completo.setPlainText("")
         self.texto_ocr_completo.setPlainText("")
+        self.texto_revisado.setPlainText("")
         self.texto_pagina_digital.setPlainText("")
         self.texto_pagina_ocr.setPlainText("")
 
@@ -611,6 +901,7 @@ class VentanaPrincipal(QMainWindow):
 
         self.tabla_paginas.setRowCount(0)
         self.selector_pagina.clear()
+        self._actualizar_estado_exportacion(False)
 
     def _mostrar_notificacion(self, mensaje: str, tipo: str) -> None:
         self.label_notificacion.setText(mensaje)
