@@ -37,13 +37,13 @@ class VentanaPrincipal(QMainWindow):
         self.exportador = ExportadorResultados()
         self.resultado_actual = None
         self.setWindowTitle("Analizador de PDFs")
-        self.resize(1240, 900)
+        self.resize(1240, 920)
         self.setAcceptDrops(True)
         self._construir_interfaz()
 
     def _construir_interfaz(self) -> None:
         contenedor = QWidget()
-        self.setCentralWidget(contenedor)
+        self.setCentralWidget(contenor := contenedor)
 
         layout_principal = QVBoxLayout(contenedor)
         layout_principal.setContentsMargins(20, 20, 20, 20)
@@ -63,7 +63,7 @@ class VentanaPrincipal(QMainWindow):
         titulo.setObjectName("titulo_principal")
 
         subtitulo = QLabel(
-            "Carga un PDF, arrástralo a la ventana o suéltalo aquí para revisar texto digital, OCR y versión final revisada."
+            "Carga un PDF, arrástralo a la ventana o suéltalo aquí para revisar texto digital, OCR, revisión manual y extracción inicial de campos."
         )
         subtitulo.setObjectName("subtitulo")
         subtitulo.setWordWrap(True)
@@ -154,6 +154,8 @@ class VentanaPrincipal(QMainWindow):
 
         layout.addLayout(layout_superior)
 
+        splitter_vertical = QSplitter(Qt.Vertical)
+
         grupo_paginas = QGroupBox("Detalle por página")
         layout_paginas = QVBoxLayout(grupo_paginas)
 
@@ -182,7 +184,52 @@ class VentanaPrincipal(QMainWindow):
         self.tabla_paginas.horizontalHeader().setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
         layout_paginas.addWidget(self.tabla_paginas)
-        layout.addWidget(grupo_paginas, 1)
+
+        grupo_campos = QGroupBox("Campos básicos extraídos")
+        layout_campos = QVBoxLayout(grupo_campos)
+        layout_campos.setSpacing(8)
+
+        fila_campos = QHBoxLayout()
+        fila_campos.setSpacing(10)
+
+        self.label_fuente_extraccion = QLabel("Fuente de extracción: -")
+        self.label_fuente_extraccion.setObjectName("diagnostico_secundario")
+
+        self.boton_reextraer_campos = QPushButton("Reextraer desde texto revisado")
+        self.boton_reextraer_campos.clicked.connect(self.reextraer_campos_desde_texto_revisado)
+        self.boton_reextraer_campos.setEnabled(False)
+
+        fila_campos.addWidget(self.label_fuente_extraccion, 1)
+        fila_campos.addWidget(self.boton_reextraer_campos)
+
+        self.tabla_campos = QTableWidget(0, 4)
+        self.tabla_campos.setHorizontalHeaderLabels(
+            [
+                "Campo",
+                "Valor",
+                "Estado",
+                "Estrategia",
+            ]
+        )
+        self.tabla_campos.verticalHeader().setVisible(False)
+        self.tabla_campos.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.tabla_campos.setSelectionBehavior(QTableWidget.SelectRows)
+        self.tabla_campos.setSelectionMode(QTableWidget.SingleSelection)
+        self.tabla_campos.setAlternatingRowColors(True)
+        self.tabla_campos.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.tabla_campos.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.tabla_campos.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.tabla_campos.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.tabla_campos.horizontalHeader().setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+
+        layout_campos.addLayout(fila_campos)
+        layout_campos.addWidget(self.tabla_campos)
+
+        splitter_vertical.addWidget(grupo_paginas)
+        splitter_vertical.addWidget(grupo_campos)
+        splitter_vertical.setSizes([430, 240])
+
+        layout.addWidget(splitter_vertical, 1)
 
         return contenedor
 
@@ -523,6 +570,7 @@ class VentanaPrincipal(QMainWindow):
             self.resultado_actual = resultado
             self._mostrar_resultado(resultado)
             self._actualizar_estado_exportacion(True)
+            self.boton_reextraer_campos.setEnabled(True)
             self._actualizar_progreso(100, "Procesamiento completado.")
             self._mostrar_notificacion("El documento fue analizado correctamente.", "ok")
         except FileNotFoundError as error:
@@ -547,11 +595,28 @@ class VentanaPrincipal(QMainWindow):
         finally:
             self.boton_seleccionar.setEnabled(True)
 
+    def reextraer_campos_desde_texto_revisado(self) -> None:
+        if self.resultado_actual is None:
+            QMessageBox.information(self, "Sin resultados", "Primero debes analizar un documento.")
+            return
+
+        self._sincronizar_texto_revisado()
+        try:
+            self.pipeline.reextraer_campos(self.resultado_actual, callback=self._actualizar_progreso)
+            self._cargar_campos_extraidos(self.resultado_actual)
+            self._mostrar_notificacion("Campos reextraídos desde el texto revisado.", "ok")
+            self.statusBar().showMessage("Campos reextraídos correctamente.")
+        except Exception as error:
+            mensaje = f"No se pudo reextraer los campos. Detalle: {error}"
+            self._mostrar_notificacion(mensaje, "error")
+            QMessageBox.critical(self, "Error al reextraer campos", mensaje)
+
     def exportar_json(self) -> None:
         if self.resultado_actual is None:
             QMessageBox.information(self, "Sin resultados", "Primero debes analizar un documento.")
             return
 
+        self._sincronizar_texto_revisado()
         ruta = self._solicitar_ruta_exportacion("json")
         if not ruta:
             return
@@ -570,6 +635,7 @@ class VentanaPrincipal(QMainWindow):
             QMessageBox.information(self, "Sin resultados", "Primero debes analizar un documento.")
             return
 
+        self._sincronizar_texto_revisado()
         ruta = self._solicitar_ruta_exportacion("txt")
         if not ruta:
             return
@@ -780,6 +846,7 @@ class VentanaPrincipal(QMainWindow):
             self.tabla_paginas.setItem(fila, 5, item_diagnostico)
 
         self._cargar_textos(resultado)
+        self._cargar_campos_extraidos(resultado)
 
     def _cargar_textos(self, resultado) -> None:
         self.selector_pagina.blockSignals(True)
@@ -818,6 +885,27 @@ class VentanaPrincipal(QMainWindow):
         else:
             self.texto_pagina_digital.setPlainText("No hay páginas disponibles para mostrar.")
             self.texto_pagina_ocr.setPlainText("No hay páginas disponibles para mostrar.")
+
+    def _cargar_campos_extraidos(self, resultado) -> None:
+        self.label_fuente_extraccion.setText(
+            f"Fuente de extracción: {resultado.texto_fuente_extraccion or '-'}"
+        )
+
+        self.tabla_campos.setRowCount(0)
+
+        for campo in resultado.campos_extraidos:
+            fila = self.tabla_campos.rowCount()
+            self.tabla_campos.insertRow(fila)
+
+            item_campo = QTableWidgetItem(campo.etiqueta)
+            item_valor = QTableWidgetItem(campo.valor if campo.valor else "No detectado")
+            item_estado = QTableWidgetItem("Detectado" if campo.detectado else "No detectado")
+            item_estrategia = QTableWidgetItem(campo.estrategia)
+
+            self.tabla_campos.setItem(fila, 0, item_campo)
+            self.tabla_campos.setItem(fila, 1, item_valor)
+            self.tabla_campos.setItem(fila, 2, item_estado)
+            self.tabla_campos.setItem(fila, 3, item_estrategia)
 
     def _mostrar_texto_pagina_seleccionada(self, indice: int) -> None:
         self._mostrar_texto_pagina(indice)
@@ -876,6 +964,7 @@ class VentanaPrincipal(QMainWindow):
         self.valor_confianza_diagnostico.setText("Confianza estimada: -")
         self.valor_estado_ocr.setText("OCR no ejecutado")
         self.valor_detalle_ocr.setText("Sin preparación pendiente.")
+        self.label_fuente_extraccion.setText("Fuente de extracción: -")
         self.texto_completo.setPlainText("")
         self.texto_ocr_completo.setPlainText("")
         self.texto_revisado.setPlainText("")
@@ -900,8 +989,10 @@ class VentanaPrincipal(QMainWindow):
         self.valor_estado_ocr.style().polish(self.valor_estado_ocr)
 
         self.tabla_paginas.setRowCount(0)
+        self.tabla_campos.setRowCount(0)
         self.selector_pagina.clear()
         self._actualizar_estado_exportacion(False)
+        self.boton_reextraer_campos.setEnabled(False)
 
     def _mostrar_notificacion(self, mensaje: str, tipo: str) -> None:
         self.label_notificacion.setText(mensaje)

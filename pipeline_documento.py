@@ -1,4 +1,5 @@
 from analizador_pdf import AnalizadorPDF
+from extractor_poliza import ExtractorPoliza
 from modelos import ResultadoAnalisisPDF
 from procesador_imagen import ProcesadorImagen
 from servicio_ocr import ServicioOCR
@@ -10,10 +11,12 @@ class PipelineDocumento:
         analizador: AnalizadorPDF | None = None,
         procesador_imagen: ProcesadorImagen | None = None,
         servicio_ocr: ServicioOCR | None = None,
+        extractor_poliza: ExtractorPoliza | None = None,
     ) -> None:
         self.analizador = analizador or AnalizadorPDF()
         self.procesador_imagen = procesador_imagen or ProcesadorImagen()
         self.servicio_ocr = servicio_ocr or ServicioOCR()
+        self.extractor_poliza = extractor_poliza or ExtractorPoliza()
 
     def procesar(self, ruta_archivo: str, callback=None) -> ResultadoAnalisisPDF:
         self._emitir_progreso(callback, 5, "Analizando PDF...")
@@ -40,6 +43,7 @@ class PipelineDocumento:
         if not resultado.apto_para_ocr:
             resultado.ocr_disponible = self.servicio_ocr.esta_configurado()
             self._preparar_texto_revision(resultado)
+            self._extraer_campos(resultado, callback)
             self._emitir_progreso(callback, 100, "Análisis completado. OCR no requerido.")
             return resultado
 
@@ -53,6 +57,7 @@ class PipelineDocumento:
             resultado.motor_ocr = self.servicio_ocr.motor_ocr
             resultado.ocr_disponible = False
             self._preparar_texto_revision(resultado)
+            self._extraer_campos(resultado, callback)
             self._emitir_progreso(callback, 100, "Análisis completado. OCR no disponible.")
             return resultado
 
@@ -69,6 +74,7 @@ class PipelineDocumento:
         )
 
         self._preparar_texto_revision(resultado)
+        self._extraer_campos(resultado, callback)
 
         mensaje_final = "Procesamiento completado."
         if resultado.codigo_estado_ocr == "ejecutado":
@@ -80,6 +86,16 @@ class PipelineDocumento:
 
         self._emitir_progreso(callback, 100, mensaje_final)
         return resultado
+
+    def reextraer_campos(self, resultado: ResultadoAnalisisPDF, callback=None) -> ResultadoAnalisisPDF:
+        self._emitir_progreso(callback, 70, "Reextrayendo campos desde texto revisado...")
+        resultado = self.extractor_poliza.extraer(resultado)
+        self._emitir_progreso(callback, 100, "Campos reextraídos correctamente.")
+        return resultado
+
+    def _extraer_campos(self, resultado: ResultadoAnalisisPDF, callback=None) -> None:
+        self._emitir_progreso(callback, 85, "Extrayendo campos básicos de póliza...")
+        self.extractor_poliza.extraer(resultado)
 
     def _preparar_texto_revision(self, resultado: ResultadoAnalisisPDF) -> None:
         if resultado.texto_final_revisado.strip():

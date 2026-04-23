@@ -19,6 +19,15 @@ class ResultadoPagina:
 
 
 @dataclass
+class CampoExtraido:
+    nombre_campo: str
+    etiqueta: str
+    valor: str = ""
+    detectado: bool = False
+    estrategia: str = "no_detectado"
+
+
+@dataclass
 class ResultadoAnalisisPDF:
     ruta_archivo: str
     nombre_archivo: str
@@ -28,6 +37,7 @@ class ResultadoAnalisisPDF:
     texto_completo: str = ""
     texto_ocr_completo: str = ""
     texto_final_revisado: str = ""
+    texto_fuente_extraccion: str = ""
     diagnostico_general: str = "Sin análisis"
     codigo_diagnostico_general: str = "sin_analisis"
     detalle_diagnostico: str = ""
@@ -45,3 +55,4 @@ class ResultadoAnalisisPDF:
     acciones_preparacion: List[str] = field(default_factory=list)
     errores_ocr: List[str] = field(default_factory=list)
     resumen_paginas: List[ResultadoPagina] = field(default_factory=list)
+    campos_extraidos: List[CampoExtraido] = field(default_factory=list)

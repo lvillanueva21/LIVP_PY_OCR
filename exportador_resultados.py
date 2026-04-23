@@ -54,6 +54,19 @@ class ExportadorResultados:
                 "acciones_preparacion": resultado.acciones_preparacion,
                 "errores_ocr": resultado.errores_ocr,
             },
+            "extraccion": {
+                "fuente_texto": resultado.texto_fuente_extraccion,
+                "campos": [
+                    {
+                        "nombre_campo": campo.nombre_campo,
+                        "etiqueta": campo.etiqueta,
+                        "valor": campo.valor,
+                        "detectado": campo.detectado,
+                        "estrategia": campo.estrategia,
+                    }
+                    for campo in resultado.campos_extraidos
+                ],
+            },
             "paginas": [
                 {
                     "numero_pagina": pagina.numero_pagina,
@@ -128,9 +141,17 @@ class ExportadorResultados:
                 lineas.append(f"- {error}")
 
         lineas.append("")
+        lineas.append("CAMPOS EXTRAÍDOS")
+        lineas.append("-" * 80)
+        lineas.append(f"Fuente de extracción: {resultado.texto_fuente_extraccion or '-'}")
+        for campo in resultado.campos_extraidos:
+            lineas.append(f"{campo.etiqueta}: {campo.valor if campo.valor else 'No detectado'}")
+            lineas.append(f"  Estado: {'Detectado' if campo.detectado else 'No detectado'}")
+            lineas.append(f"  Estrategia: {campo.estrategia}")
+        lineas.append("")
+
         lineas.append("DETALLE POR PÁGINA")
         lineas.append("-" * 80)
-
         for pagina in resultado.resumen_paginas:
             lineas.append(f"Página {pagina.numero_pagina}")
             lineas.append(f"  Tiene texto digital: {'Sí' if pagina.tiene_texto else 'No'}")
