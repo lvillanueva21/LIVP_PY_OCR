@@ -734,7 +734,7 @@ class VentanaPrincipal(QMainWindow):
         else:
             self.valor_diagnostico.setObjectName("estado_alerta")
 
-        if resultado.codigo_estado_ocr in {"ejecutado"}:
+        if resultado.codigo_estado_ocr == "ejecutado":
             self.valor_estado_ocr.setObjectName("estado_ok")
         elif resultado.codigo_estado_ocr in {"parcial", "apto", "no_ejecutado"}:
             self.valor_estado_ocr.setObjectName("estado_alerta")

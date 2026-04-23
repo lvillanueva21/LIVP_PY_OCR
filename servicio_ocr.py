@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import fitz
 import pytesseract
 from pytesseract import TesseractNotFoundError
@@ -8,9 +10,22 @@ from procesador_imagen import ProcesadorImagen
 
 class ServicioOCR:
     def __init__(self) -> None:
+        self.ruta_tesseract = self._resolver_ruta_tesseract()
+        pytesseract.pytesseract.tesseract_cmd = self.ruta_tesseract
         self.motor_ocr = "Tesseract OCR local"
         self.idioma_ocr = "spa+eng"
-        pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
+    def _resolver_ruta_tesseract(self) -> str:
+        rutas_candidatas = [
+            Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe"),
+            Path(r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe"),
+        ]
+
+        for ruta in rutas_candidatas:
+            if ruta.exists():
+                return str(ruta)
+
+        return "tesseract"
 
     def esta_configurado(self) -> bool:
         try:
@@ -123,7 +138,7 @@ class ServicioOCR:
                     resultado.codigo_estado_ocr = "no_disponible"
                     resultado.estado_ocr = "OCR no disponible"
                     resultado.detalle_ocr = (
-                        "Tesseract no está instalado o no está en el PATH del sistema."
+                        "Tesseract no está instalado o no está accesible desde el sistema."
                     )
                     resultado.motor_ocr = "Tesseract OCR local (no disponible)"
                     resultado.ocr_disponible = False

@@ -146,26 +146,17 @@ class ExportadorResultados:
 
         lineas.append("TEXTO DIGITAL EXTRAÍDO")
         lineas.append("-" * 80)
-        if resultado.texto_completo.strip():
-            lineas.append(resultado.texto_completo)
-        else:
-            lineas.append("No hay texto digital extraído.")
+        lineas.append(resultado.texto_completo if resultado.texto_completo.strip() else "No hay texto digital extraído.")
         lineas.append("")
 
         lineas.append("TEXTO OCR")
         lineas.append("-" * 80)
-        if resultado.texto_ocr_completo.strip():
-            lineas.append(resultado.texto_ocr_completo)
-        else:
-            lineas.append("No hay texto OCR extraído.")
+        lineas.append(resultado.texto_ocr_completo if resultado.texto_ocr_completo.strip() else "No hay texto OCR extraído.")
         lineas.append("")
 
         lineas.append("TEXTO FINAL REVISADO")
         lineas.append("-" * 80)
-        if resultado.texto_final_revisado.strip():
-            lineas.append(resultado.texto_final_revisado)
-        else:
-            lineas.append("No hay texto final revisado.")
+        lineas.append(resultado.texto_final_revisado if resultado.texto_final_revisado.strip() else "No hay texto final revisado.")
         lineas.append("")
 
         return "\n".join(lineas)
