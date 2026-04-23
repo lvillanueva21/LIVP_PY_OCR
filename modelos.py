@@ -13,6 +13,9 @@ class ResultadoPagina:
     codigo_diagnostico: str = "sin_analisis"
     diagnostico: str = "Sin análisis"
     confianza: int = 0
+    texto_ocr: str = ""
+    ocr_ejecutado: bool = False
+    ocr_error: str = ""
 
 
 @dataclass
@@ -23,6 +26,7 @@ class ResultadoAnalisisPDF:
     tiene_texto_digital: bool
     necesita_ocr: bool
     texto_completo: str = ""
+    texto_ocr_completo: str = ""
     diagnostico_general: str = "Sin análisis"
     codigo_diagnostico_general: str = "sin_analisis"
     detalle_diagnostico: str = ""
@@ -33,6 +37,10 @@ class ResultadoAnalisisPDF:
     detalle_ocr: str = ""
     motor_ocr: str = "Pendiente de integrar"
     apto_para_ocr: bool = False
+    ocr_disponible: bool = False
     requiere_preprocesamiento: bool = False
+    paginas_ocr_objetivo: int = 0
+    paginas_ocr_procesadas: int = 0
     acciones_preparacion: List[str] = field(default_factory=list)
+    errores_ocr: List[str] = field(default_factory=list)
     resumen_paginas: List[ResultadoPagina] = field(default_factory=list)

@@ -98,6 +98,19 @@ QTabBar::tab:selected {
     color: #102a43;
 }
 
+QProgressBar {
+    border: 1px solid #bcccdc;
+    border-radius: 7px;
+    background-color: #ffffff;
+    text-align: center;
+    min-height: 18px;
+}
+
+QProgressBar::chunk {
+    background-color: #243b53;
+    border-radius: 6px;
+}
+
 QLabel#titulo_principal {
     font-size: 22px;
     font-weight: 700;

@@ -1,24 +1,27 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QFileDialog,
     QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QMainWindow,
     QMessageBox,
-    QPushButton,
     QPlainTextEdit,
+    QProgressBar,
+    QPushButton,
+    QSplitter,
     QStatusBar,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
     QVBoxLayout,
     QWidget,
-    QHeaderView,
 )
 
 from pipeline_documento import PipelineDocumento
@@ -30,7 +33,7 @@ class VentanaPrincipal(QMainWindow):
         self.pipeline = PipelineDocumento()
         self.resultado_actual = None
         self.setWindowTitle("Analizador de PDFs")
-        self.resize(1180, 840)
+        self.resize(1220, 880)
         self._construir_interfaz()
 
     def _construir_interfaz(self) -> None:
@@ -66,8 +69,11 @@ class VentanaPrincipal(QMainWindow):
 
     def _crear_panel_seleccion(self, layout_padre: QVBoxLayout) -> None:
         grupo = QGroupBox("Archivo PDF")
-        layout = QHBoxLayout(grupo)
-        layout.setSpacing(10)
+        layout_principal = QVBoxLayout(grupo)
+        layout_principal.setSpacing(10)
+
+        fila_superior = QHBoxLayout()
+        fila_superior.setSpacing(10)
 
         self.input_ruta = QLineEdit()
         self.input_ruta.setPlaceholderText("Selecciona un archivo PDF...")
@@ -76,8 +82,25 @@ class VentanaPrincipal(QMainWindow):
         self.boton_seleccionar = QPushButton("Seleccionar PDF")
         self.boton_seleccionar.clicked.connect(self.seleccionar_pdf)
 
-        layout.addWidget(self.input_ruta, 1)
-        layout.addWidget(self.boton_seleccionar)
+        fila_superior.addWidget(self.input_ruta, 1)
+        fila_superior.addWidget(self.boton_seleccionar)
+
+        fila_progreso = QHBoxLayout()
+        fila_progreso.setSpacing(10)
+
+        self.label_progreso = QLabel("Esperando archivo...")
+        self.label_progreso.setObjectName("diagnostico_secundario")
+
+        self.barra_progreso = QProgressBar()
+        self.barra_progreso.setRange(0, 100)
+        self.barra_progreso.setValue(0)
+        self.barra_progreso.setTextVisible(True)
+
+        fila_progreso.addWidget(self.label_progreso, 1)
+        fila_progreso.addWidget(self.barra_progreso, 2)
+
+        layout_principal.addLayout(fila_superior)
+        layout_principal.addLayout(fila_progreso)
 
         layout_padre.addWidget(grupo)
 
@@ -248,19 +271,28 @@ class VentanaPrincipal(QMainWindow):
 
         self.pestanas_texto = QTabWidget()
 
-        pestaña_texto_completo = QWidget()
-        layout_texto_completo = QVBoxLayout(pestaña_texto_completo)
-        layout_texto_completo.setContentsMargins(8, 8, 8, 8)
+        pestaña_texto_digital = QWidget()
+        layout_digital = QVBoxLayout(pestaña_texto_digital)
+        layout_digital.setContentsMargins(8, 8, 8, 8)
 
         self.texto_completo = QPlainTextEdit()
         self.texto_completo.setReadOnly(True)
-        self.texto_completo.setPlaceholderText("Aquí se mostrará el texto completo extraído del documento.")
-        layout_texto_completo.addWidget(self.texto_completo)
+        self.texto_completo.setPlaceholderText("Aquí se mostrará el texto digital extraído del documento.")
+        layout_digital.addWidget(self.texto_completo)
+
+        pestaña_texto_ocr = QWidget()
+        layout_ocr = QVBoxLayout(pestaña_texto_ocr)
+        layout_ocr.setContentsMargins(8, 8, 8, 8)
+
+        self.texto_ocr_completo = QPlainTextEdit()
+        self.texto_ocr_completo.setReadOnly(True)
+        self.texto_ocr_completo.setPlaceholderText("Aquí se mostrará el texto OCR obtenido del documento.")
+        layout_ocr.addWidget(self.texto_ocr_completo)
 
         pestaña_texto_por_pagina = QWidget()
-        layout_texto_por_pagina = QVBoxLayout(pestaña_texto_por_pagina)
-        layout_texto_por_pagina.setContentsMargins(8, 8, 8, 8)
-        layout_texto_por_pagina.setSpacing(8)
+        layout_por_pagina = QVBoxLayout(pestaña_texto_por_pagina)
+        layout_por_pagina.setContentsMargins(8, 8, 8, 8)
+        layout_por_pagina.setSpacing(8)
 
         fila_selector = QHBoxLayout()
         etiqueta_selector = QLabel("Página:")
@@ -273,14 +305,45 @@ class VentanaPrincipal(QMainWindow):
         fila_selector.addWidget(self.selector_pagina)
         fila_selector.addStretch()
 
-        self.texto_pagina = QPlainTextEdit()
-        self.texto_pagina.setReadOnly(True)
-        self.texto_pagina.setPlaceholderText("Aquí se mostrará el texto de la página seleccionada.")
+        splitter = QSplitter(Qt.Vertical)
 
-        layout_texto_por_pagina.addLayout(fila_selector)
-        layout_texto_por_pagina.addWidget(self.texto_pagina)
+        panel_digital = QWidget()
+        layout_panel_digital = QVBoxLayout(panel_digital)
+        layout_panel_digital.setContentsMargins(0, 0, 0, 0)
+        layout_panel_digital.setSpacing(6)
 
-        self.pestanas_texto.addTab(pestaña_texto_completo, "Texto completo")
+        label_digital = QLabel("Texto digital de la página")
+        label_digital.setObjectName("etiqueta_seccion")
+
+        self.texto_pagina_digital = QPlainTextEdit()
+        self.texto_pagina_digital.setReadOnly(True)
+
+        layout_panel_digital.addWidget(label_digital)
+        layout_panel_digital.addWidget(self.texto_pagina_digital)
+
+        panel_ocr = QWidget()
+        layout_panel_ocr = QVBoxLayout(panel_ocr)
+        layout_panel_ocr.setContentsMargins(0, 0, 0, 0)
+        layout_panel_ocr.setSpacing(6)
+
+        label_ocr = QLabel("Texto OCR de la página")
+        label_ocr.setObjectName("etiqueta_seccion")
+
+        self.texto_pagina_ocr = QPlainTextEdit()
+        self.texto_pagina_ocr.setReadOnly(True)
+
+        layout_panel_ocr.addWidget(label_ocr)
+        layout_panel_ocr.addWidget(self.texto_pagina_ocr)
+
+        splitter.addWidget(panel_digital)
+        splitter.addWidget(panel_ocr)
+        splitter.setSizes([300, 300])
+
+        layout_por_pagina.addLayout(fila_selector)
+        layout_por_pagina.addWidget(splitter)
+
+        self.pestanas_texto.addTab(pestaña_texto_digital, "Texto digital")
+        self.pestanas_texto.addTab(pestaña_texto_ocr, "Texto OCR")
         self.pestanas_texto.addTab(pestaña_texto_por_pagina, "Texto por página")
 
         layout.addWidget(self.pestanas_texto)
@@ -319,34 +382,46 @@ class VentanaPrincipal(QMainWindow):
             return
 
         self.input_ruta.setText(ruta_archivo)
-        self.statusBar().showMessage("Analizando PDF...")
+        self._actualizar_progreso(0, "Iniciando procesamiento...")
         self._mostrar_notificacion("Procesando documento seleccionado...", "alerta")
+        self.boton_seleccionar.setEnabled(False)
 
         try:
-            resultado = self.pipeline.procesar(ruta_archivo)
+            resultado = self.pipeline.procesar(
+                ruta_archivo,
+                callback=self._actualizar_progreso,
+            )
             self.resultado_actual = resultado
             self._mostrar_resultado(resultado)
-            self.statusBar().showMessage("Análisis completado correctamente.")
+            self._actualizar_progreso(100, "Procesamiento completado.")
             self._mostrar_notificacion("El documento fue analizado correctamente.", "ok")
         except FileNotFoundError as error:
             self.resultado_actual = None
             self._limpiar_resultados()
-            self.statusBar().showMessage("No se pudo localizar el archivo.")
+            self._actualizar_progreso(0, "No se pudo localizar el archivo.")
             self._mostrar_notificacion(str(error), "error")
             QMessageBox.warning(self, "Archivo no válido", str(error))
         except ValueError as error:
             self.resultado_actual = None
             self._limpiar_resultados()
-            self.statusBar().showMessage("El PDF no pudo analizarse.")
+            self._actualizar_progreso(0, "El PDF no pudo analizarse.")
             self._mostrar_notificacion(str(error), "error")
             QMessageBox.critical(self, "Error al analizar PDF", str(error))
         except Exception as error:
             self.resultado_actual = None
             self._limpiar_resultados()
             mensaje = f"Ocurrió un error inesperado: {error}"
-            self.statusBar().showMessage("Error inesperado durante el análisis.")
+            self._actualizar_progreso(0, "Error inesperado durante el análisis.")
             self._mostrar_notificacion(mensaje, "error")
             QMessageBox.critical(self, "Error inesperado", mensaje)
+        finally:
+            self.boton_seleccionar.setEnabled(True)
+
+    def _actualizar_progreso(self, valor: int, mensaje: str) -> None:
+        self.barra_progreso.setValue(max(0, min(100, valor)))
+        self.label_progreso.setText(mensaje)
+        self.statusBar().showMessage(mensaje)
+        QApplication.processEvents()
 
     def _mostrar_resultado(self, resultado) -> None:
         self.valor_nombre.setText(resultado.nombre_archivo)
@@ -361,9 +436,14 @@ class VentanaPrincipal(QMainWindow):
         )
 
         self.valor_estado_ocr.setText(resultado.estado_ocr)
-        self.valor_detalle_ocr.setText(
-            f"{resultado.detalle_ocr}\nMotor OCR previsto: {resultado.motor_ocr}"
-        )
+        detalle_ocr = resultado.detalle_ocr
+        if resultado.paginas_ocr_objetivo > 0:
+            detalle_ocr += (
+                f"\nPáginas objetivo: {resultado.paginas_ocr_objetivo} | "
+                f"Procesadas: {resultado.paginas_ocr_procesadas}"
+            )
+        detalle_ocr += f"\nMotor OCR: {resultado.motor_ocr}"
+        self.valor_detalle_ocr.setText(detalle_ocr)
 
         self.valor_texto.setObjectName("estado_ok" if resultado.tiene_texto_digital else "estado_alerta")
         self.valor_ocr.setObjectName("estado_ok" if resultado.tipo_ocr_sugerido == "No" else "estado_alerta")
@@ -373,10 +453,12 @@ class VentanaPrincipal(QMainWindow):
         else:
             self.valor_diagnostico.setObjectName("estado_alerta")
 
-        if resultado.codigo_estado_ocr == "apto":
+        if resultado.codigo_estado_ocr in {"ejecutado"}:
+            self.valor_estado_ocr.setObjectName("estado_ok")
+        elif resultado.codigo_estado_ocr in {"parcial", "apto", "no_ejecutado"}:
             self.valor_estado_ocr.setObjectName("estado_alerta")
         else:
-            self.valor_estado_ocr.setObjectName("estado_ok")
+            self.valor_estado_ocr.setObjectName("estado_error")
 
         self.valor_texto.style().unpolish(self.valor_texto)
         self.valor_texto.style().polish(self.valor_texto)
@@ -426,8 +508,14 @@ class VentanaPrincipal(QMainWindow):
             self.texto_completo.setPlainText(resultado.texto_completo)
         else:
             self.texto_completo.setPlainText(
-                "Este documento no contiene texto digital suficiente para una lectura completa.\n\n"
-                "En una fase posterior se integrará OCR para intentar leer este tipo de archivos."
+                "Este documento no contiene texto digital suficiente para una lectura completa."
+            )
+
+        if resultado.texto_ocr_completo.strip():
+            self.texto_ocr_completo.setPlainText(resultado.texto_ocr_completo)
+        else:
+            self.texto_ocr_completo.setPlainText(
+                f"{resultado.estado_ocr}\n\n{resultado.detalle_ocr}"
             )
 
         for pagina in resultado.resumen_paginas:
@@ -439,31 +527,55 @@ class VentanaPrincipal(QMainWindow):
             self.selector_pagina.setCurrentIndex(0)
             self._mostrar_texto_pagina(0)
         else:
-            self.texto_pagina.setPlainText("No hay páginas disponibles para mostrar.")
+            self.texto_pagina_digital.setPlainText("No hay páginas disponibles para mostrar.")
+            self.texto_pagina_ocr.setPlainText("No hay páginas disponibles para mostrar.")
 
     def _mostrar_texto_pagina_seleccionada(self, indice: int) -> None:
         self._mostrar_texto_pagina(indice)
 
     def _mostrar_texto_pagina(self, indice: int) -> None:
         if self.resultado_actual is None:
-            self.texto_pagina.setPlainText("")
+            self.texto_pagina_digital.setPlainText("")
+            self.texto_pagina_ocr.setPlainText("")
             return
 
         if indice < 0 or indice >= len(self.resultado_actual.resumen_paginas):
-            self.texto_pagina.setPlainText("")
+            self.texto_pagina_digital.setPlainText("")
+            self.texto_pagina_ocr.setPlainText("")
             return
 
         pagina = self.resultado_actual.resumen_paginas[indice]
 
         if pagina.tiene_texto and pagina.texto_extraido.strip():
-            self.texto_pagina.setPlainText(pagina.texto_extraido)
+            self.texto_pagina_digital.setPlainText(pagina.texto_extraido)
         else:
-            self.texto_pagina.setPlainText(
-                "Esta página no contiene texto digital suficiente.\n\n"
-                f"Diagnóstico: {pagina.diagnostico}.\n"
-                f"Confianza estimada: {pagina.confianza}%.\n\n"
-                "Quedará pendiente para OCR en una fase posterior."
+            self.texto_pagina_digital.setPlainText(
+                "Esta página no contiene texto digital suficiente."
             )
+
+        if pagina.ocr_error:
+            self.texto_pagina_ocr.setPlainText(
+                f"OCR con error en esta página:\n\n{pagina.ocr_error}"
+            )
+        elif pagina.ocr_ejecutado and pagina.texto_ocr.strip():
+            self.texto_pagina_ocr.setPlainText(pagina.texto_ocr)
+        elif pagina.ocr_ejecutado and not pagina.texto_ocr.strip():
+            self.texto_pagina_ocr.setPlainText(
+                "OCR ejecutado, pero no devolvió texto legible en esta página."
+            )
+        else:
+            if self.resultado_actual.codigo_estado_ocr == "no_disponible":
+                self.texto_pagina_ocr.setPlainText(
+                    "OCR no disponible. Instala Tesseract y vuelve a intentar."
+                )
+            elif self.resultado_actual.codigo_estado_ocr == "no_ejecutado":
+                self.texto_pagina_ocr.setPlainText(
+                    "OCR no fue necesario para esta página."
+                )
+            else:
+                self.texto_pagina_ocr.setPlainText(
+                    "OCR no se aplicó a esta página en esta ejecución."
+                )
 
     def _limpiar_resultados(self) -> None:
         self.valor_nombre.setText("-")
@@ -475,6 +587,10 @@ class VentanaPrincipal(QMainWindow):
         self.valor_confianza_diagnostico.setText("Confianza estimada: -")
         self.valor_estado_ocr.setText("OCR no ejecutado")
         self.valor_detalle_ocr.setText("Sin preparación pendiente.")
+        self.texto_completo.setPlainText("")
+        self.texto_ocr_completo.setPlainText("")
+        self.texto_pagina_digital.setPlainText("")
+        self.texto_pagina_ocr.setPlainText("")
 
         self.valor_texto.setObjectName("valor_principal")
         self.valor_ocr.setObjectName("valor_principal")
@@ -495,8 +611,6 @@ class VentanaPrincipal(QMainWindow):
 
         self.tabla_paginas.setRowCount(0)
         self.selector_pagina.clear()
-        self.texto_completo.setPlainText("")
-        self.texto_pagina.setPlainText("")
 
     def _mostrar_notificacion(self, mensaje: str, tipo: str) -> None:
         self.label_notificacion.setText(mensaje)

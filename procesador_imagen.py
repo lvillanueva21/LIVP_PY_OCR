@@ -1,3 +1,6 @@
+import fitz
+from PIL import Image, ImageOps
+
 from modelos import ResultadoAnalisisPDF
 
 
@@ -30,6 +33,27 @@ class ProcesadorImagen:
 
         acciones_limpias = self._eliminar_duplicados(acciones)
         return True, acciones_limpias
+
+    def preparar_imagen_pagina(self, pagina: fitz.Page, zoom: float = 2.0) -> Image.Image:
+        matriz = fitz.Matrix(zoom, zoom)
+        pixmap = pagina.get_pixmap(matrix=matriz, alpha=False)
+
+        modo = "RGB"
+        if pixmap.n == 1:
+            modo = "L"
+
+        imagen = Image.frombytes(modo, [pixmap.width, pixmap.height], pixmap.samples)
+
+        if imagen.mode != "L":
+            imagen = ImageOps.grayscale(imagen)
+
+        imagen = ImageOps.autocontrast(imagen)
+
+        # Umbral simple para mejorar lectura OCR local sin meter librerías extra.
+        imagen = imagen.point(lambda pixel: 255 if pixel > 180 else 0)
+        imagen = imagen.convert("L")
+
+        return imagen
 
     def _eliminar_duplicados(self, acciones: list[str]) -> list[str]:
         acciones_unicas = []
