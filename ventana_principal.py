@@ -21,16 +21,16 @@ from PySide6.QtWidgets import (
     QHeaderView,
 )
 
-from analizador_pdf import AnalizadorPDF
+from pipeline_documento import PipelineDocumento
 
 
 class VentanaPrincipal(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.analizador = AnalizadorPDF()
+        self.pipeline = PipelineDocumento()
         self.resultado_actual = None
         self.setWindowTitle("Analizador de PDFs")
-        self.resize(1160, 820)
+        self.resize(1180, 840)
         self._construir_interfaz()
 
     def _construir_interfaz(self) -> None:
@@ -44,8 +44,7 @@ class VentanaPrincipal(QMainWindow):
         self._crear_encabezado(layout_principal)
         self._crear_panel_seleccion(layout_principal)
         self._crear_panel_superior(layout_principal)
-        self._crear_panel_paginas(layout_principal)
-        self._crear_panel_texto(layout_principal)
+        self._crear_panel_central(layout_principal)
         self._crear_panel_notificacion(layout_principal)
 
         barra_estado = QStatusBar()
@@ -106,7 +105,7 @@ class VentanaPrincipal(QMainWindow):
         etiqueta_paginas.setObjectName("etiqueta_seccion")
         etiqueta_texto = QLabel("Texto digital detectado")
         etiqueta_texto.setObjectName("etiqueta_seccion")
-        etiqueta_ocr = QLabel("Necesidad probable de OCR")
+        etiqueta_ocr = QLabel("OCR sugerido")
         etiqueta_ocr.setObjectName("etiqueta_seccion")
 
         self.valor_nombre = QLabel("-")
@@ -162,43 +161,90 @@ class VentanaPrincipal(QMainWindow):
         etiqueta_detalle = QLabel("Interpretación")
         etiqueta_detalle.setObjectName("etiqueta_seccion")
 
-        self.valor_detalle_diagnostico = QLabel(
-            "Aún no se ha procesado ningún documento."
-        )
+        self.valor_detalle_diagnostico = QLabel("Aún no se ha procesado ningún documento.")
         self.valor_detalle_diagnostico.setWordWrap(True)
+
+        self.valor_confianza_diagnostico = QLabel("Confianza estimada: -")
+        self.valor_confianza_diagnostico.setObjectName("diagnostico_secundario")
+        self.valor_confianza_diagnostico.setWordWrap(True)
+
+        etiqueta_estado_ocr = QLabel("Estado OCR")
+        etiqueta_estado_ocr.setObjectName("etiqueta_seccion")
+
+        self.valor_estado_ocr = QLabel("OCR no ejecutado")
+        self.valor_estado_ocr.setObjectName("valor_principal")
+        self.valor_estado_ocr.setWordWrap(True)
+
+        etiqueta_detalle_ocr = QLabel("Detalle OCR")
+        etiqueta_detalle_ocr.setObjectName("etiqueta_seccion")
+
+        self.valor_detalle_ocr = QLabel("Sin preparación pendiente.")
+        self.valor_detalle_ocr.setWordWrap(True)
 
         layout.addWidget(etiqueta_titulo)
         layout.addWidget(self.valor_diagnostico)
         layout.addSpacing(8)
         layout.addWidget(etiqueta_detalle)
         layout.addWidget(self.valor_detalle_diagnostico)
+        layout.addSpacing(8)
+        layout.addWidget(self.valor_confianza_diagnostico)
+        layout.addSpacing(10)
+        layout.addWidget(etiqueta_estado_ocr)
+        layout.addWidget(self.valor_estado_ocr)
+        layout.addSpacing(8)
+        layout.addWidget(etiqueta_detalle_ocr)
+        layout.addWidget(self.valor_detalle_ocr)
         layout.addStretch()
 
         return grupo
 
-    def _crear_panel_paginas(self, layout_padre: QVBoxLayout) -> None:
-        grupo = QGroupBox("Detalle por página")
-        layout = QVBoxLayout(grupo)
+    def _crear_panel_central(self, layout_padre: QVBoxLayout) -> None:
+        self.pestanas_centrales = QTabWidget()
 
-        self.tabla_paginas = QTableWidget(0, 3)
-        self.tabla_paginas.setHorizontalHeaderLabels(["Página", "Estado", "Caracteres detectados"])
+        tab_detalle = self._crear_tab_detalle_paginas()
+        tab_texto = self._crear_tab_texto()
+
+        self.pestanas_centrales.addTab(tab_detalle, "Detalle por página")
+        self.pestanas_centrales.addTab(tab_texto, "Texto extraído")
+
+        layout_padre.addWidget(self.pestanas_centrales, 1)
+
+    def _crear_tab_detalle_paginas(self) -> QWidget:
+        contenedor = QWidget()
+        layout = QVBoxLayout(contenedor)
+        layout.setContentsMargins(8, 8, 8, 8)
+
+        self.tabla_paginas = QTableWidget(0, 6)
+        self.tabla_paginas.setHorizontalHeaderLabels(
+            [
+                "Página",
+                "Texto",
+                "Caracteres",
+                "Imágenes",
+                "Cobertura imagen",
+                "Diagnóstico",
+            ]
+        )
         self.tabla_paginas.verticalHeader().setVisible(False)
         self.tabla_paginas.setEditTriggers(QTableWidget.NoEditTriggers)
         self.tabla_paginas.setSelectionBehavior(QTableWidget.SelectRows)
         self.tabla_paginas.setSelectionMode(QTableWidget.SingleSelection)
         self.tabla_paginas.setAlternatingRowColors(True)
-        self.tabla_paginas.horizontalHeader().setStretchLastSection(False)
         self.tabla_paginas.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self.tabla_paginas.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.tabla_paginas.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.tabla_paginas.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.tabla_paginas.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.tabla_paginas.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self.tabla_paginas.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)
         self.tabla_paginas.horizontalHeader().setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
         layout.addWidget(self.tabla_paginas)
-        layout_padre.addWidget(grupo, 1)
+        return contenedor
 
-    def _crear_panel_texto(self, layout_padre: QVBoxLayout) -> None:
-        grupo = QGroupBox("Texto extraído")
-        layout = QVBoxLayout(grupo)
+    def _crear_tab_texto(self) -> QWidget:
+        contenedor = QWidget()
+        layout = QVBoxLayout(contenedor)
+        layout.setContentsMargins(8, 8, 8, 8)
 
         self.pestanas_texto = QTabWidget()
 
@@ -238,7 +284,7 @@ class VentanaPrincipal(QMainWindow):
         self.pestanas_texto.addTab(pestaña_texto_por_pagina, "Texto por página")
 
         layout.addWidget(self.pestanas_texto)
-        layout_padre.addWidget(grupo, 1)
+        return contenedor
 
     def _crear_panel_notificacion(self, layout_padre: QVBoxLayout) -> None:
         panel = QFrame()
@@ -277,7 +323,7 @@ class VentanaPrincipal(QMainWindow):
         self._mostrar_notificacion("Procesando documento seleccionado...", "alerta")
 
         try:
-            resultado = self.analizador.analizar(ruta_archivo)
+            resultado = self.pipeline.procesar(ruta_archivo)
             self.resultado_actual = resultado
             self._mostrar_resultado(resultado)
             self.statusBar().showMessage("Análisis completado correctamente.")
@@ -305,36 +351,32 @@ class VentanaPrincipal(QMainWindow):
     def _mostrar_resultado(self, resultado) -> None:
         self.valor_nombre.setText(resultado.nombre_archivo)
         self.valor_paginas.setText(str(resultado.cantidad_paginas))
-
-        total_paginas = len(resultado.resumen_paginas)
-        paginas_con_texto = sum(1 for pagina in resultado.resumen_paginas if pagina.tiene_texto)
-        paginas_sin_texto = total_paginas - paginas_con_texto
-
         self.valor_texto.setText("Sí" if resultado.tiene_texto_digital else "No")
-        self.valor_ocr.setText("Sí" if resultado.necesita_ocr else "No")
+        self.valor_ocr.setText(resultado.tipo_ocr_sugerido)
 
-        if paginas_con_texto == total_paginas and total_paginas > 0:
-            diagnostico = "PDF con texto digital"
-            detalle = "Todas las páginas tienen texto extraíble. No parece requerir OCR."
-            tipo_diagnostico = "ok"
-        elif paginas_con_texto > 0 and paginas_sin_texto > 0:
-            diagnostico = "PDF mixto o híbrido"
-            detalle = (
-                f"Se detectaron {paginas_con_texto} páginas con texto y "
-                f"{paginas_sin_texto} páginas sin texto. Puede requerir OCR parcial."
-            )
-            tipo_diagnostico = "alerta"
-        else:
-            diagnostico = "PDF escaneado / OCR recomendado"
-            detalle = "No se detectó texto digital extraíble. Probablemente requerirá OCR."
-            tipo_diagnostico = "alerta"
+        self.valor_diagnostico.setText(resultado.diagnostico_general)
+        self.valor_detalle_diagnostico.setText(resultado.detalle_diagnostico)
+        self.valor_confianza_diagnostico.setText(
+            f"Confianza estimada: {resultado.confianza_diagnostico}%"
+        )
 
-        self.valor_diagnostico.setText(diagnostico)
-        self.valor_detalle_diagnostico.setText(detalle)
+        self.valor_estado_ocr.setText(resultado.estado_ocr)
+        self.valor_detalle_ocr.setText(
+            f"{resultado.detalle_ocr}\nMotor OCR previsto: {resultado.motor_ocr}"
+        )
 
         self.valor_texto.setObjectName("estado_ok" if resultado.tiene_texto_digital else "estado_alerta")
-        self.valor_ocr.setObjectName("estado_alerta" if resultado.necesita_ocr else "estado_ok")
-        self.valor_diagnostico.setObjectName("estado_ok" if tipo_diagnostico == "ok" else "estado_alerta")
+        self.valor_ocr.setObjectName("estado_ok" if resultado.tipo_ocr_sugerido == "No" else "estado_alerta")
+
+        if resultado.codigo_diagnostico_general == "texto_digital":
+            self.valor_diagnostico.setObjectName("estado_ok")
+        else:
+            self.valor_diagnostico.setObjectName("estado_alerta")
+
+        if resultado.codigo_estado_ocr == "apto":
+            self.valor_estado_ocr.setObjectName("estado_alerta")
+        else:
+            self.valor_estado_ocr.setObjectName("estado_ok")
 
         self.valor_texto.style().unpolish(self.valor_texto)
         self.valor_texto.style().polish(self.valor_texto)
@@ -345,6 +387,9 @@ class VentanaPrincipal(QMainWindow):
         self.valor_diagnostico.style().unpolish(self.valor_diagnostico)
         self.valor_diagnostico.style().polish(self.valor_diagnostico)
 
+        self.valor_estado_ocr.style().unpolish(self.valor_estado_ocr)
+        self.valor_estado_ocr.style().polish(self.valor_estado_ocr)
+
         self.tabla_paginas.setRowCount(0)
 
         for pagina in resultado.resumen_paginas:
@@ -352,15 +397,24 @@ class VentanaPrincipal(QMainWindow):
             self.tabla_paginas.insertRow(fila)
 
             item_pagina = QTableWidgetItem(str(pagina.numero_pagina))
-            item_estado = QTableWidgetItem("Con texto" if pagina.tiene_texto else "Sin texto")
+            item_texto = QTableWidgetItem("Sí" if pagina.tiene_texto else "No")
             item_caracteres = QTableWidgetItem(str(pagina.cantidad_caracteres))
+            item_imagenes = QTableWidgetItem(str(pagina.cantidad_imagenes))
+            item_cobertura = QTableWidgetItem(f"{pagina.cobertura_imagen * 100:.0f}%")
+            item_diagnostico = QTableWidgetItem(f"{pagina.diagnostico} ({pagina.confianza}%)")
 
             item_pagina.setTextAlignment(Qt.AlignCenter)
+            item_texto.setTextAlignment(Qt.AlignCenter)
             item_caracteres.setTextAlignment(Qt.AlignCenter)
+            item_imagenes.setTextAlignment(Qt.AlignCenter)
+            item_cobertura.setTextAlignment(Qt.AlignCenter)
 
             self.tabla_paginas.setItem(fila, 0, item_pagina)
-            self.tabla_paginas.setItem(fila, 1, item_estado)
+            self.tabla_paginas.setItem(fila, 1, item_texto)
             self.tabla_paginas.setItem(fila, 2, item_caracteres)
+            self.tabla_paginas.setItem(fila, 3, item_imagenes)
+            self.tabla_paginas.setItem(fila, 4, item_cobertura)
+            self.tabla_paginas.setItem(fila, 5, item_diagnostico)
 
         self._cargar_texto_extraido(resultado)
 
@@ -368,31 +422,24 @@ class VentanaPrincipal(QMainWindow):
         self.selector_pagina.blockSignals(True)
         self.selector_pagina.clear()
 
-        if resultado.tiene_texto_digital:
-            if resultado.texto_completo.strip():
-                self.texto_completo.setPlainText(resultado.texto_completo)
-            else:
-                self.texto_completo.setPlainText(
-                    "Se detectó texto digital, pero no se pudo construir un bloque de texto completo."
-                )
-
-            for pagina in resultado.resumen_paginas:
-                self.selector_pagina.addItem(f"Página {pagina.numero_pagina}")
-
-            if resultado.resumen_paginas:
-                self.selector_pagina.setCurrentIndex(0)
-                self._mostrar_texto_pagina(0)
-            else:
-                self.texto_pagina.setPlainText("No hay páginas disponibles para mostrar.")
+        if resultado.tiene_texto_digital and resultado.texto_completo.strip():
+            self.texto_completo.setPlainText(resultado.texto_completo)
         else:
-            mensaje = (
-                "Este documento no contiene texto digital extraíble.\n\n"
+            self.texto_completo.setPlainText(
+                "Este documento no contiene texto digital suficiente para una lectura completa.\n\n"
                 "En una fase posterior se integrará OCR para intentar leer este tipo de archivos."
             )
-            self.texto_completo.setPlainText(mensaje)
-            self.texto_pagina.setPlainText(mensaje)
+
+        for pagina in resultado.resumen_paginas:
+            self.selector_pagina.addItem(f"Página {pagina.numero_pagina}")
 
         self.selector_pagina.blockSignals(False)
+
+        if resultado.resumen_paginas:
+            self.selector_pagina.setCurrentIndex(0)
+            self._mostrar_texto_pagina(0)
+        else:
+            self.texto_pagina.setPlainText("No hay páginas disponibles para mostrar.")
 
     def _mostrar_texto_pagina_seleccionada(self, indice: int) -> None:
         self._mostrar_texto_pagina(indice)
@@ -412,7 +459,9 @@ class VentanaPrincipal(QMainWindow):
             self.texto_pagina.setPlainText(pagina.texto_extraido)
         else:
             self.texto_pagina.setPlainText(
-                "Esta página no contiene texto digital extraíble.\n\n"
+                "Esta página no contiene texto digital suficiente.\n\n"
+                f"Diagnóstico: {pagina.diagnostico}.\n"
+                f"Confianza estimada: {pagina.confianza}%.\n\n"
                 "Quedará pendiente para OCR en una fase posterior."
             )
 
@@ -423,10 +472,14 @@ class VentanaPrincipal(QMainWindow):
         self.valor_ocr.setText("-")
         self.valor_diagnostico.setText("Sin análisis")
         self.valor_detalle_diagnostico.setText("No se pudo obtener información del documento.")
+        self.valor_confianza_diagnostico.setText("Confianza estimada: -")
+        self.valor_estado_ocr.setText("OCR no ejecutado")
+        self.valor_detalle_ocr.setText("Sin preparación pendiente.")
 
         self.valor_texto.setObjectName("valor_principal")
         self.valor_ocr.setObjectName("valor_principal")
         self.valor_diagnostico.setObjectName("diagnostico_texto")
+        self.valor_estado_ocr.setObjectName("valor_principal")
 
         self.valor_texto.style().unpolish(self.valor_texto)
         self.valor_texto.style().polish(self.valor_texto)
@@ -436,6 +489,9 @@ class VentanaPrincipal(QMainWindow):
 
         self.valor_diagnostico.style().unpolish(self.valor_diagnostico)
         self.valor_diagnostico.style().polish(self.valor_diagnostico)
+
+        self.valor_estado_ocr.style().unpolish(self.valor_estado_ocr)
+        self.valor_estado_ocr.style().polish(self.valor_estado_ocr)
 
         self.tabla_paginas.setRowCount(0)
         self.selector_pagina.clear()

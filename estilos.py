@@ -142,6 +142,12 @@ QLabel#diagnostico_texto {
     color: #102a43;
 }
 
+QLabel#diagnostico_secundario {
+    font-size: 12px;
+    color: #486581;
+    font-weight: 600;
+}
+
 QFrame#panel_notificacion {
     background-color: #ffffff;
     border: 1px solid #d9e2ec;
