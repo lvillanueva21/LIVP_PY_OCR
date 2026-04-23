@@ -18,6 +18,7 @@ class AnalizadorPDF:
             cantidad_paginas = documento.page_count
             resumen_paginas = []
             tiene_texto_digital = False
+            textos_documento = []
 
             for indice in range(cantidad_paginas):
                 pagina = documento.load_page(indice)
@@ -27,16 +28,19 @@ class AnalizadorPDF:
 
                 if pagina_tiene_texto:
                     tiene_texto_digital = True
+                    textos_documento.append(f"===== PÁGINA {indice + 1} =====\n{texto}")
 
                 resumen_paginas.append(
                     ResultadoPagina(
                         numero_pagina=indice + 1,
                         tiene_texto=pagina_tiene_texto,
                         cantidad_caracteres=cantidad_caracteres,
+                        texto_extraido=texto,
                     )
                 )
 
             necesita_ocr = not tiene_texto_digital
+            texto_completo = "\n\n".join(textos_documento).strip()
 
             return ResultadoAnalisisPDF(
                 ruta_archivo=ruta_archivo,
@@ -44,6 +48,7 @@ class AnalizadorPDF:
                 cantidad_paginas=cantidad_paginas,
                 tiene_texto_digital=tiene_texto_digital,
                 necesita_ocr=necesita_ocr,
+                texto_completo=texto_completo,
                 resumen_paginas=resumen_paginas,
             )
         finally:
