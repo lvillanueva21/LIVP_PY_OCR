@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List
+from typing import Any, List
 
 
 @dataclass
@@ -56,3 +56,14 @@ class ResultadoAnalisisPDF:
     errores_ocr: List[str] = field(default_factory=list)
     resumen_paginas: List[ResultadoPagina] = field(default_factory=list)
     campos_extraidos: List[CampoExtraido] = field(default_factory=list)
+
+    modo_analisis: str = "basico"
+    etiqueta_modo: str = "Básico"
+    recomendacion_modo: str = ""
+    observaciones_modo: List[str] = field(default_factory=list)
+    es_provisional: bool = False
+    tiempo_total_ms: int = 0
+
+    metricas_documento_modo: Any = None
+    metricas_paginas_modo: List[Any] = field(default_factory=list)
+    comparacion_modos: Any = None

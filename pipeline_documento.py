@@ -1,5 +1,10 @@
+from copy import deepcopy
+from time import perf_counter
+
 from analizador_pdf import AnalizadorPDF
+from comparador_analisis import ComparadorAnalisis
 from extractor_poliza import ExtractorPoliza
+from modos_analisis import ModoAnalisis
 from modelos import ResultadoAnalisisPDF
 from procesador_imagen import ProcesadorImagen
 from servicio_ocr import ServicioOCR
@@ -12,13 +17,17 @@ class PipelineDocumento:
         procesador_imagen: ProcesadorImagen | None = None,
         servicio_ocr: ServicioOCR | None = None,
         extractor_poliza: ExtractorPoliza | None = None,
+        comparador_analisis: ComparadorAnalisis | None = None,
     ) -> None:
         self.analizador = analizador or AnalizadorPDF()
         self.procesador_imagen = procesador_imagen or ProcesadorImagen()
         self.servicio_ocr = servicio_ocr or ServicioOCR()
         self.extractor_poliza = extractor_poliza or ExtractorPoliza()
+        self.comparador_analisis = comparador_analisis or ComparadorAnalisis()
 
     def procesar(self, ruta_archivo: str, callback=None) -> ResultadoAnalisisPDF:
+        inicio = perf_counter()
+
         self._emitir_progreso(callback, 5, "Analizando PDF...")
         resultado = self.analizador.analizar(ruta_archivo)
 
@@ -44,6 +53,7 @@ class PipelineDocumento:
             resultado.ocr_disponible = self.servicio_ocr.esta_configurado()
             self._preparar_texto_revision(resultado)
             self._extraer_campos(resultado, callback)
+            resultado.tiempo_total_ms = int((perf_counter() - inicio) * 1000)
             self._emitir_progreso(callback, 100, "Análisis completado. OCR no requerido.")
             return resultado
 
@@ -58,6 +68,7 @@ class PipelineDocumento:
             resultado.ocr_disponible = False
             self._preparar_texto_revision(resultado)
             self._extraer_campos(resultado, callback)
+            resultado.tiempo_total_ms = int((perf_counter() - inicio) * 1000)
             self._emitir_progreso(callback, 100, "Análisis completado. OCR no disponible.")
             return resultado
 
@@ -75,6 +86,7 @@ class PipelineDocumento:
 
         self._preparar_texto_revision(resultado)
         self._extraer_campos(resultado, callback)
+        resultado.tiempo_total_ms = int((perf_counter() - inicio) * 1000)
 
         mensaje_final = "Procesamiento completado."
         if resultado.codigo_estado_ocr == "ejecutado":
@@ -87,11 +99,72 @@ class PipelineDocumento:
         self._emitir_progreso(callback, 100, mensaje_final)
         return resultado
 
+    def procesar_segun_modo(self, ruta_archivo: str, modo: str, callback=None) -> tuple[
+        ResultadoAnalisisPDF,
+        ResultadoAnalisisPDF | None,
+        ResultadoAnalisisPDF | None,
+        object | None,
+    ]:
+        if modo == ModoAnalisis.BASICO:
+            resultado_basico = self.procesar(ruta_archivo, callback=callback)
+            self._finalizar_modo(resultado_basico, ModoAnalisis.BASICO)
+            return resultado_basico, resultado_basico, None, None
+
+        if modo == ModoAnalisis.PRO:
+            callback_basico = self._crear_callback_rango(callback, 0, 85, "Base")
+            resultado_base = self.procesar(ruta_archivo, callback=callback_basico)
+            resultado_pro = self._crear_resultado_provisional(resultado_base)
+            self._emitir_progreso(callback, 92, "Preparando modo Pro estructural...")
+            self._finalizar_modo(resultado_pro, ModoAnalisis.PRO)
+            self._emitir_progreso(callback, 100, "Modo Pro estructural completado.")
+            return resultado_pro, None, resultado_pro, None
+
+        callback_basico = self._crear_callback_rango(callback, 0, 72, "Básico")
+        resultado_basico = self.procesar(ruta_archivo, callback=callback_basico)
+        self._finalizar_modo(resultado_basico, ModoAnalisis.BASICO)
+
+        self._emitir_progreso(callback, 78, "Construyendo resultado Pro estructural...")
+        resultado_pro = self._crear_resultado_provisional(resultado_basico)
+        self._finalizar_modo(resultado_pro, ModoAnalisis.PRO)
+
+        self._emitir_progreso(callback, 90, "Comparando resultados...")
+        comparacion = self.comparador_analisis.comparar(resultado_basico, resultado_pro)
+
+        resultado_basico.comparacion_modos = comparacion
+        resultado_pro.comparacion_modos = comparacion
+
+        resultado_mostrado = resultado_basico
+        if comparacion.modo_ganador == ModoAnalisis.PRO:
+            resultado_mostrado = resultado_pro
+
+        self._emitir_progreso(callback, 100, "Comparación completada.")
+        return resultado_mostrado, resultado_basico, resultado_pro, comparacion
+
     def reextraer_campos(self, resultado: ResultadoAnalisisPDF, callback=None) -> ResultadoAnalisisPDF:
         self._emitir_progreso(callback, 70, "Reextrayendo campos desde texto revisado...")
         resultado = self.extractor_poliza.extraer(resultado)
+        self._finalizar_metricas_existentes(resultado)
         self._emitir_progreso(callback, 100, "Campos reextraídos correctamente.")
         return resultado
+
+    def _finalizar_modo(self, resultado: ResultadoAnalisisPDF, modo: str) -> None:
+        resultado.modo_analisis = modo
+        resultado.etiqueta_modo = ModoAnalisis.etiqueta(modo)
+        resultado.recomendacion_modo = self.comparador_analisis.recomendar_modo(resultado)
+        resultado.metricas_paginas_modo = self.comparador_analisis.construir_metricas_paginas(resultado)
+        resultado.metricas_documento_modo = self.comparador_analisis.construir_metricas_documento(resultado)
+
+    def _finalizar_metricas_existentes(self, resultado: ResultadoAnalisisPDF) -> None:
+        resultado.metricas_paginas_modo = self.comparador_analisis.construir_metricas_paginas(resultado)
+        resultado.metricas_documento_modo = self.comparador_analisis.construir_metricas_documento(resultado)
+
+    def _crear_resultado_provisional(self, resultado_base: ResultadoAnalisisPDF) -> ResultadoAnalisisPDF:
+        resultado_pro = deepcopy(resultado_base)
+        resultado_pro.es_provisional = True
+        resultado_pro.observaciones_modo.append(
+            "Modo Pro provisional: en esta fase aún reutiliza el flujo del modo Básico."
+        )
+        return resultado_pro
 
     def _extraer_campos(self, resultado: ResultadoAnalisisPDF, callback=None) -> None:
         self._emitir_progreso(callback, 85, "Extrayendo campos básicos de póliza...")
@@ -121,3 +194,15 @@ class PipelineDocumento:
     def _emitir_progreso(self, callback, valor: int, mensaje: str) -> None:
         if callback:
             callback(valor, mensaje)
+
+    def _crear_callback_rango(self, callback, inicio: int, fin: int, prefijo: str):
+        if callback is None:
+            return None
+
+        ancho = max(1, fin - inicio)
+
+        def callback_rango(valor: int, mensaje: str) -> None:
+            valor_ajustado = inicio + int((max(0, min(100, valor)) / 100) * ancho)
+            callback(valor_ajustado, f"{prefijo}: {mensaje}")
+
+        return callback_rango

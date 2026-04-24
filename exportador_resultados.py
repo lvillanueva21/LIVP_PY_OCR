@@ -5,28 +5,69 @@ from modelos import ResultadoAnalisisPDF
 
 
 class ExportadorResultados:
-    def exportar_json(self, resultado: ResultadoAnalisisPDF, ruta_destino: str) -> None:
+    def exportar_json(
+        self,
+        resultado: ResultadoAnalisisPDF,
+        ruta_destino: str,
+        *,
+        resultado_basico: ResultadoAnalisisPDF | None = None,
+        resultado_pro: ResultadoAnalisisPDF | None = None,
+        comparacion=None,
+    ) -> None:
         if resultado is None:
             raise ValueError("No hay resultados para exportar.")
 
         ruta = Path(ruta_destino)
-        datos = self._construir_diccionario(resultado)
+        datos = self._construir_diccionario(
+            resultado,
+            resultado_basico=resultado_basico,
+            resultado_pro=resultado_pro,
+            comparacion=comparacion,
+        )
 
         with ruta.open("w", encoding="utf-8") as archivo:
             json.dump(datos, archivo, ensure_ascii=False, indent=4)
 
-    def exportar_txt(self, resultado: ResultadoAnalisisPDF, ruta_destino: str) -> None:
+    def exportar_txt(
+        self,
+        resultado: ResultadoAnalisisPDF,
+        ruta_destino: str,
+        *,
+        resultado_basico: ResultadoAnalisisPDF | None = None,
+        resultado_pro: ResultadoAnalisisPDF | None = None,
+        comparacion=None,
+    ) -> None:
         if resultado is None:
             raise ValueError("No hay resultados para exportar.")
 
         ruta = Path(ruta_destino)
-        contenido = self._construir_texto_plano(resultado)
+        contenido = self._construir_texto_plano(
+            resultado,
+            resultado_basico=resultado_basico,
+            resultado_pro=resultado_pro,
+            comparacion=comparacion,
+        )
 
         with ruta.open("w", encoding="utf-8") as archivo:
             archivo.write(contenido)
 
-    def _construir_diccionario(self, resultado: ResultadoAnalisisPDF) -> dict:
-        return {
+    def _construir_diccionario(
+        self,
+        resultado: ResultadoAnalisisPDF,
+        *,
+        resultado_basico: ResultadoAnalisisPDF | None = None,
+        resultado_pro: ResultadoAnalisisPDF | None = None,
+        comparacion=None,
+    ) -> dict:
+        datos = {
+            "modo": {
+                "modo_analisis": resultado.modo_analisis,
+                "etiqueta_modo": resultado.etiqueta_modo,
+                "recomendacion_modo": resultado.recomendacion_modo,
+                "observaciones_modo": resultado.observaciones_modo,
+                "es_provisional": resultado.es_provisional,
+                "tiempo_total_ms": resultado.tiempo_total_ms,
+            },
             "documento": {
                 "ruta_archivo": resultado.ruta_archivo,
                 "nombre_archivo": resultado.nombre_archivo,
@@ -67,6 +108,10 @@ class ExportadorResultados:
                     for campo in resultado.campos_extraidos
                 ],
             },
+            "metricas": {
+                "documento": self._serializar_metrica_documento(resultado.metricas_documento_modo),
+                "paginas": [self._serializar_metrica_pagina(metrica) for metrica in resultado.metricas_paginas_modo],
+            },
             "paginas": [
                 {
                     "numero_pagina": pagina.numero_pagina,
@@ -91,12 +136,62 @@ class ExportadorResultados:
             },
         }
 
-    def _construir_texto_plano(self, resultado: ResultadoAnalisisPDF) -> str:
+        if resultado_basico is not None:
+            datos["resultado_basico"] = {
+                "modo": resultado_basico.etiqueta_modo,
+                "metricas_documento": self._serializar_metrica_documento(resultado_basico.metricas_documento_modo),
+            }
+
+        if resultado_pro is not None:
+            datos["resultado_pro"] = {
+                "modo": resultado_pro.etiqueta_modo,
+                "metricas_documento": self._serializar_metrica_documento(resultado_pro.metricas_documento_modo),
+            }
+
+        if comparacion is not None:
+            datos["comparacion"] = self._serializar_comparacion(comparacion)
+
+        return datos
+
+    def _construir_texto_plano(
+        self,
+        resultado: ResultadoAnalisisPDF,
+        *,
+        resultado_basico: ResultadoAnalisisPDF | None = None,
+        resultado_pro: ResultadoAnalisisPDF | None = None,
+        comparacion=None,
+    ) -> str:
         lineas = []
 
         lineas.append("RESULTADO DE ANÁLISIS DE PDF")
         lineas.append("=" * 80)
         lineas.append("")
+        lineas.append("MODO DE ANÁLISIS")
+        lineas.append("-" * 80)
+        lineas.append(f"Modo ejecutado: {resultado.etiqueta_modo}")
+        lineas.append(f"Recomendación automática: {resultado.recomendacion_modo or '-'}")
+        lineas.append(f"Tiempo total: {resultado.tiempo_total_ms} ms")
+        lineas.append(f"Provisional: {'Sí' if resultado.es_provisional else 'No'}")
+        if resultado.observaciones_modo:
+            lineas.append("Observaciones del modo:")
+            for observacion in resultado.observaciones_modo:
+                lineas.append(f"- {observacion}")
+        lineas.append("")
+
+        if comparacion is not None:
+            lineas.append("COMPARACIÓN DE MODOS")
+            lineas.append("-" * 80)
+            lineas.append(f"Ganador: {comparacion.etiqueta_ganador or '-'}")
+            lineas.append(f"Score Básico: {comparacion.score_basico}")
+            lineas.append(f"Score Pro: {comparacion.score_pro}")
+            lineas.append(f"Diferencia: {comparacion.diferencia_absoluta}")
+            lineas.append(f"Motivo: {comparacion.motivo or '-'}")
+            lineas.append(f"Recomendación: {comparacion.recomendacion or '-'}")
+            if comparacion.observaciones:
+                lineas.append("Observaciones:")
+                for observacion in comparacion.observaciones:
+                    lineas.append(f"- {observacion}")
+            lineas.append("")
 
         lineas.append("RESUMEN DEL DOCUMENTO")
         lineas.append("-" * 80)
@@ -129,18 +224,29 @@ class ExportadorResultados:
         )
         lineas.append(f"Páginas objetivo OCR: {resultado.paginas_ocr_objetivo}")
         lineas.append(f"Páginas procesadas OCR: {resultado.paginas_ocr_procesadas}")
-
         if resultado.acciones_preparacion:
             lineas.append("Acciones de preparación:")
             for accion in resultado.acciones_preparacion:
                 lineas.append(f"- {accion}")
-
         if resultado.errores_ocr:
             lineas.append("Errores OCR:")
             for error in resultado.errores_ocr:
                 lineas.append(f"- {error}")
-
         lineas.append("")
+
+        if resultado.metricas_documento_modo is not None:
+            metrica = resultado.metricas_documento_modo
+            lineas.append("MÉTRICAS DEL MODO")
+            lineas.append("-" * 80)
+            lineas.append(f"Score total: {metrica.score_total}")
+            lineas.append(f"Score campos: {metrica.score_campos}")
+            lineas.append(f"Score legibilidad: {metrica.score_legibilidad}")
+            lineas.append(f"Score confianza: {metrica.score_confianza}")
+            lineas.append(f"Score texto útil: {metrica.score_texto_util}")
+            lineas.append(f"Score estabilidad: {metrica.score_estabilidad}")
+            lineas.append(f"Score velocidad: {metrica.score_velocidad}")
+            lineas.append("")
+
         lineas.append("CAMPOS EXTRAÍDOS")
         lineas.append("-" * 80)
         lineas.append(f"Fuente de extracción: {resultado.texto_fuente_extraccion or '-'}")
@@ -180,4 +286,86 @@ class ExportadorResultados:
         lineas.append(resultado.texto_final_revisado if resultado.texto_final_revisado.strip() else "No hay texto final revisado.")
         lineas.append("")
 
+        if resultado_basico is not None:
+            lineas.append("RESUMEN MODO BÁSICO")
+            lineas.append("-" * 80)
+            lineas.append(self._texto_resumen_metrica(resultado_basico.metricas_documento_modo))
+            lineas.append("")
+
+        if resultado_pro is not None:
+            lineas.append("RESUMEN MODO PRO")
+            lineas.append("-" * 80)
+            lineas.append(self._texto_resumen_metrica(resultado_pro.metricas_documento_modo))
+            lineas.append("")
+
         return "\n".join(lineas)
+
+    def _texto_resumen_metrica(self, metrica) -> str:
+        if metrica is None:
+            return "Sin métricas disponibles."
+
+        lineas = [
+            f"Modo: {metrica.etiqueta_modo}",
+            f"Score total: {metrica.score_total}",
+            f"Campos detectados: {metrica.cantidad_campos_detectados}",
+            f"Texto útil: {metrica.total_caracteres_utiles}",
+            f"Tiempo total: {metrica.tiempo_total_ms} ms",
+        ]
+        if metrica.observaciones:
+            lineas.append("Observaciones:")
+            for observacion in metrica.observaciones:
+                lineas.append(f"- {observacion}")
+        return "\n".join(lineas)
+
+    def _serializar_metrica_documento(self, metrica) -> dict | None:
+        if metrica is None:
+            return None
+
+        return {
+            "modo": metrica.modo,
+            "etiqueta_modo": metrica.etiqueta_modo,
+            "paginas_totales": metrica.paginas_totales,
+            "paginas_con_texto_digital": metrica.paginas_con_texto_digital,
+            "paginas_con_ocr": metrica.paginas_con_ocr,
+            "total_caracteres_utiles": metrica.total_caracteres_utiles,
+            "cantidad_campos_detectados": metrica.cantidad_campos_detectados,
+            "tiempo_total_ms": metrica.tiempo_total_ms,
+            "score_campos": metrica.score_campos,
+            "score_legibilidad": metrica.score_legibilidad,
+            "score_confianza": metrica.score_confianza,
+            "score_texto_util": metrica.score_texto_util,
+            "score_estabilidad": metrica.score_estabilidad,
+            "score_velocidad": metrica.score_velocidad,
+            "score_total": metrica.score_total,
+            "observaciones": metrica.observaciones,
+        }
+
+    def _serializar_metrica_pagina(self, metrica) -> dict | None:
+        if metrica is None:
+            return None
+
+        return {
+            "numero_pagina": metrica.numero_pagina,
+            "fuente_texto": metrica.fuente_texto,
+            "caracteres_texto_digital": metrica.caracteres_texto_digital,
+            "caracteres_texto_ocr": metrica.caracteres_texto_ocr,
+            "total_caracteres_utiles": metrica.total_caracteres_utiles,
+            "cantidad_campos_detectados": metrica.cantidad_campos_detectados,
+            "tiempo_estimado_ms": metrica.tiempo_estimado_ms,
+            "observaciones": metrica.observaciones,
+        }
+
+    def _serializar_comparacion(self, comparacion) -> dict | None:
+        if comparacion is None:
+            return None
+
+        return {
+            "modo_ganador": comparacion.modo_ganador,
+            "etiqueta_ganador": comparacion.etiqueta_ganador,
+            "score_basico": comparacion.score_basico,
+            "score_pro": comparacion.score_pro,
+            "diferencia_absoluta": comparacion.diferencia_absoluta,
+            "motivo": comparacion.motivo,
+            "recomendacion": comparacion.recomendacion,
+            "observaciones": comparacion.observaciones,
+        }

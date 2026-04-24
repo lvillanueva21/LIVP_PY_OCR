@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from exportador_resultados import ExportadorResultados
+from modos_analisis import ModoAnalisis
 from pipeline_documento import PipelineDocumento
 
 
@@ -38,9 +39,13 @@ class VentanaPrincipal(QMainWindow):
         self.pipeline = PipelineDocumento()
         self.exportador = ExportadorResultados()
         self.resultado_actual = None
+        self.resultado_basico_actual = None
+        self.resultado_pro_actual = None
+        self.comparacion_actual = None
         self.pixmap_preview_original = None
+
         self.setWindowTitle("Analizador de PDFs")
-        self.resize(1260, 940)
+        self.resize(1260, 960)
         self.setAcceptDrops(True)
         self._construir_interfaz()
 
@@ -66,7 +71,7 @@ class VentanaPrincipal(QMainWindow):
         titulo.setObjectName("titulo_principal")
 
         subtitulo = QLabel(
-            "Carga un PDF, arrástralo a la ventana o suéltalo aquí para revisar texto digital, OCR, revisión manual y extracción inicial de campos."
+            "Carga un PDF, arrástralo a la ventana o suéltalo aquí. Ahora puedes ejecutar análisis en modo Básico, Pro estructural o Comparar ambos."
         )
         subtitulo.setObjectName("subtitulo")
         subtitulo.setWordWrap(True)
@@ -86,6 +91,10 @@ class VentanaPrincipal(QMainWindow):
         self.input_ruta.setPlaceholderText("Selecciona o arrastra un archivo PDF...")
         self.input_ruta.setReadOnly(True)
 
+        self.selector_modo = QComboBox()
+        for modo, etiqueta in ModoAnalisis.opciones_combo():
+            self.selector_modo.addItem(etiqueta, modo)
+
         self.boton_seleccionar = QPushButton("Seleccionar PDF")
         self.boton_seleccionar.clicked.connect(self.seleccionar_pdf)
 
@@ -98,6 +107,7 @@ class VentanaPrincipal(QMainWindow):
         self.boton_exportar_txt.setEnabled(False)
 
         fila_superior.addWidget(self.input_ruta, 1)
+        fila_superior.addWidget(self.selector_modo)
         fila_superior.addWidget(self.boton_seleccionar)
         fila_superior.addWidget(self.boton_exportar_json)
         fila_superior.addWidget(self.boton_exportar_txt)
@@ -148,13 +158,6 @@ class VentanaPrincipal(QMainWindow):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(16)
 
-        splitter_horizontal = QSplitter(Qt.Horizontal)
-
-        panel_izquierdo = QWidget()
-        layout_izquierdo = QVBoxLayout(panel_izquierdo)
-        layout_izquierdo.setContentsMargins(0, 0, 0, 0)
-        layout_izquierdo.setSpacing(16)
-
         layout_superior = QHBoxLayout()
         layout_superior.setSpacing(16)
 
@@ -164,15 +167,19 @@ class VentanaPrincipal(QMainWindow):
         layout_superior.addWidget(grupo_resumen, 2)
         layout_superior.addWidget(grupo_diagnostico, 1)
 
-        layout_izquierdo.addLayout(layout_superior)
+        layout.addLayout(layout_superior)
+
+        layout_inferior = QHBoxLayout()
+        layout_inferior.setSpacing(16)
 
         panel_preview = self._crear_panel_preview_pdf()
-        layout_izquierdo.addWidget(panel_preview, 1)
+        panel_modo = self._crear_panel_modo_comparacion()
 
-        splitter_horizontal.addWidget(panel_izquierdo)
-        splitter_horizontal.setSizes([900])
+        layout_inferior.addWidget(panel_preview, 2)
+        layout_inferior.addWidget(panel_modo, 1)
 
-        layout.addWidget(splitter_horizontal, 1)
+        layout.addLayout(layout_inferior, 1)
+
         return contenedor
 
     def _crear_tab_documento(self) -> QWidget:
@@ -188,14 +195,7 @@ class VentanaPrincipal(QMainWindow):
 
         self.tabla_paginas = QTableWidget(0, 6)
         self.tabla_paginas.setHorizontalHeaderLabels(
-            [
-                "Página",
-                "Texto",
-                "Caracteres",
-                "Imágenes",
-                "Cobertura imagen",
-                "Diagnóstico",
-            ]
+            ["Página", "Texto", "Caracteres", "Imágenes", "Cobertura imagen", "Diagnóstico"]
         )
         self.tabla_paginas.verticalHeader().setVisible(False)
         self.tabla_paginas.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -230,14 +230,7 @@ class VentanaPrincipal(QMainWindow):
         fila_campos.addWidget(self.boton_reextraer_campos)
 
         self.tabla_campos = QTableWidget(0, 4)
-        self.tabla_campos.setHorizontalHeaderLabels(
-            [
-                "Campo",
-                "Valor",
-                "Estado",
-                "Estrategia",
-            ]
-        )
+        self.tabla_campos.setHorizontalHeaderLabels(["Campo", "Valor", "Estado", "Estrategia"])
         self.tabla_campos.verticalHeader().setVisible(False)
         self.tabla_campos.setEditTriggers(QTableWidget.NoEditTriggers)
         self.tabla_campos.setSelectionBehavior(QTableWidget.SelectRows)
@@ -283,6 +276,56 @@ class VentanaPrincipal(QMainWindow):
 
         layout.addWidget(descripcion)
         layout.addWidget(contenedor_preview, 1)
+        return grupo
+
+    def _crear_panel_modo_comparacion(self) -> QGroupBox:
+        grupo = QGroupBox("Modo y comparación")
+        layout = QGridLayout(grupo)
+        layout.setHorizontalSpacing(14)
+        layout.setVerticalSpacing(10)
+
+        etiquetas = [
+            ("Modo solicitado", "label_modo_solicitado"),
+            ("Modo ejecutado", "label_modo_ejecutado"),
+            ("Recomendación", "label_recomendacion_modo"),
+            ("Ganador", "label_ganador_modo"),
+            ("Score Básico", "label_score_basico"),
+            ("Score Pro", "label_score_pro"),
+        ]
+
+        self.label_modo_solicitado = QLabel("-")
+        self.label_modo_ejecutado = QLabel("-")
+        self.label_recomendacion_modo = QLabel("-")
+        self.label_recomendacion_modo.setWordWrap(True)
+        self.label_ganador_modo = QLabel("-")
+        self.label_score_basico = QLabel("-")
+        self.label_score_pro = QLabel("-")
+
+        widgets = {
+            "label_modo_solicitado": self.label_modo_solicitado,
+            "label_modo_ejecutado": self.label_modo_ejecutado,
+            "label_recomendacion_modo": self.label_recomendacion_modo,
+            "label_ganador_modo": self.label_ganador_modo,
+            "label_score_basico": self.label_score_basico,
+            "label_score_pro": self.label_score_pro,
+        }
+
+        fila = 0
+        for texto, nombre in etiquetas:
+            etiqueta = QLabel(texto)
+            etiqueta.setObjectName("etiqueta_seccion")
+            layout.addWidget(etiqueta, fila, 0)
+            layout.addWidget(widgets[nombre], fila, 1)
+            fila += 1
+
+        detalle = QLabel("Detalle")
+        detalle.setObjectName("etiqueta_seccion")
+        self.label_detalle_comparacion = QLabel("-")
+        self.label_detalle_comparacion.setWordWrap(True)
+
+        layout.addWidget(detalle, fila, 0)
+        layout.addWidget(self.label_detalle_comparacion, fila, 1)
+
         return grupo
 
     def _crear_panel_resumen(self) -> QGroupBox:
@@ -619,12 +662,19 @@ class VentanaPrincipal(QMainWindow):
         self.boton_seleccionar.setEnabled(False)
 
         try:
-            resultado = self.pipeline.procesar(
+            modo = self.selector_modo.currentData()
+            resultado_mostrado, resultado_basico, resultado_pro, comparacion = self.pipeline.procesar_segun_modo(
                 ruta_archivo,
+                modo,
                 callback=self._actualizar_progreso,
             )
-            self.resultado_actual = resultado
-            self._mostrar_resultado(resultado)
+
+            self.resultado_actual = resultado_mostrado
+            self.resultado_basico_actual = resultado_basico
+            self.resultado_pro_actual = resultado_pro
+            self.comparacion_actual = comparacion
+
+            self._mostrar_resultado(resultado_mostrado)
             self._actualizar_preview_pdf(ruta_archivo)
             self._actualizar_estado_exportacion(True)
             self.boton_reextraer_campos.setEnabled(True)
@@ -654,6 +704,7 @@ class VentanaPrincipal(QMainWindow):
 
     def _actualizar_preview_pdf(self, ruta_archivo: str) -> None:
         self.pixmap_preview_original = None
+        documento = None
 
         try:
             documento = fitz.open(ruta_archivo)
@@ -683,10 +734,11 @@ class VentanaPrincipal(QMainWindow):
             self.label_preview_pdf.setPixmap(QPixmap())
             self.label_preview_pdf.setText(f"No se pudo generar la vista previa.\n\n{error}")
         finally:
-            try:
-                documento.close()
-            except Exception:
-                pass
+            if documento is not None:
+                try:
+                    documento.close()
+                except Exception:
+                    pass
 
     def _actualizar_preview_escalado(self) -> None:
         if not self.pixmap_preview_original:
@@ -713,6 +765,7 @@ class VentanaPrincipal(QMainWindow):
         try:
             self.pipeline.reextraer_campos(self.resultado_actual, callback=self._actualizar_progreso)
             self._cargar_campos_extraidos(self.resultado_actual)
+            self._actualizar_panel_modo_comparacion()
             self._mostrar_notificacion("Campos reextraídos desde el texto revisado.", "ok")
             self.statusBar().showMessage("Campos reextraídos correctamente.")
         except Exception as error:
@@ -731,7 +784,13 @@ class VentanaPrincipal(QMainWindow):
             return
 
         try:
-            self.exportador.exportar_json(self.resultado_actual, ruta)
+            self.exportador.exportar_json(
+                self.resultado_actual,
+                ruta,
+                resultado_basico=self.resultado_basico_actual,
+                resultado_pro=self.resultado_pro_actual,
+                comparacion=self.comparacion_actual,
+            )
             self._mostrar_notificacion("Exportación JSON completada correctamente.", "ok")
             self.statusBar().showMessage(f"Archivo JSON guardado en: {ruta}")
         except Exception as error:
@@ -750,7 +809,13 @@ class VentanaPrincipal(QMainWindow):
             return
 
         try:
-            self.exportador.exportar_txt(self.resultado_actual, ruta)
+            self.exportador.exportar_txt(
+                self.resultado_actual,
+                ruta,
+                resultado_basico=self.resultado_basico_actual,
+                resultado_pro=self.resultado_pro_actual,
+                comparacion=self.comparacion_actual,
+            )
             self._mostrar_notificacion("Exportación TXT completada correctamente.", "ok")
             self.statusBar().showMessage(f"Archivo TXT guardado en: {ruta}")
         except Exception as error:
@@ -956,6 +1021,7 @@ class VentanaPrincipal(QMainWindow):
 
         self._cargar_textos(resultado)
         self._cargar_campos_extraidos(resultado)
+        self._actualizar_panel_modo_comparacion()
 
     def _cargar_textos(self, resultado) -> None:
         self.selector_pagina.blockSignals(True)
@@ -1016,6 +1082,54 @@ class VentanaPrincipal(QMainWindow):
             self.tabla_campos.setItem(fila, 2, item_estado)
             self.tabla_campos.setItem(fila, 3, item_estrategia)
 
+    def _actualizar_panel_modo_comparacion(self) -> None:
+        modo_solicitado = self.selector_modo.currentData()
+        self.label_modo_solicitado.setText(ModoAnalisis.etiqueta(modo_solicitado))
+
+        if self.resultado_actual is None:
+            self.label_modo_ejecutado.setText("-")
+            self.label_recomendacion_modo.setText("-")
+            self.label_ganador_modo.setText("-")
+            self.label_score_basico.setText("-")
+            self.label_score_pro.setText("-")
+            self.label_detalle_comparacion.setText("-")
+            return
+
+        self.label_modo_ejecutado.setText(self.resultado_actual.etiqueta_modo)
+        self.label_recomendacion_modo.setText(self.resultado_actual.recomendacion_modo or "-")
+
+        score_basico = "-"
+        if self.resultado_basico_actual and self.resultado_basico_actual.metricas_documento_modo:
+            score_basico = str(self.resultado_basico_actual.metricas_documento_modo.score_total)
+
+        score_pro = "-"
+        if self.resultado_pro_actual and self.resultado_pro_actual.metricas_documento_modo:
+            score_pro = str(self.resultado_pro_actual.metricas_documento_modo.score_total)
+
+        self.label_score_basico.setText(score_basico)
+        self.label_score_pro.setText(score_pro)
+
+        if self.comparacion_actual is not None:
+            self.label_ganador_modo.setText(self.comparacion_actual.etiqueta_ganador or "-")
+            detalle = self.comparacion_actual.motivo or "-"
+            if self.comparacion_actual.observaciones:
+                detalle += "\n" + "\n".join(self.comparacion_actual.observaciones)
+            self.label_detalle_comparacion.setText(detalle)
+        else:
+            self.label_ganador_modo.setText("Sin comparación")
+            metrica = self.resultado_actual.metricas_documento_modo
+            if metrica is not None:
+                detalle = (
+                    f"Score total estimado: {metrica.score_total}\n"
+                    f"Campos detectados: {metrica.cantidad_campos_detectados}\n"
+                    f"Tiempo total: {metrica.tiempo_total_ms} ms"
+                )
+                if metrica.observaciones:
+                    detalle += "\n" + "\n".join(metrica.observaciones)
+                self.label_detalle_comparacion.setText(detalle)
+            else:
+                self.label_detalle_comparacion.setText("-")
+
     def _mostrar_texto_pagina_seleccionada(self, indice: int) -> None:
         self._mostrar_texto_pagina(indice)
 
@@ -1055,15 +1169,18 @@ class VentanaPrincipal(QMainWindow):
                     "OCR no disponible. Instala Tesseract y vuelve a intentar."
                 )
             elif self.resultado_actual.codigo_estado_ocr == "no_ejecutado":
-                self.texto_pagina_ocr.setPlainText(
-                    "OCR no fue necesario para esta página."
-                )
+                self.texto_pagina_ocr.setPlainText("OCR no fue necesario para esta página.")
             else:
                 self.texto_pagina_ocr.setPlainText(
                     "OCR no se aplicó a esta página en esta ejecución."
                 )
 
     def _limpiar_resultados(self) -> None:
+        self.resultado_actual = None
+        self.resultado_basico_actual = None
+        self.resultado_pro_actual = None
+        self.comparacion_actual = None
+
         self.valor_nombre.setText("-")
         self.valor_paginas.setText("-")
         self.valor_texto.setText("-")
@@ -1073,10 +1190,20 @@ class VentanaPrincipal(QMainWindow):
         self.valor_confianza_diagnostico.setText("Confianza estimada: -")
         self.valor_estado_ocr.setText("OCR no ejecutado")
         self.valor_detalle_ocr.setText("Sin preparación pendiente.")
+
         self.label_fuente_extraccion.setText("Fuente de extracción: -")
+        self.label_modo_solicitado.setText("-")
+        self.label_modo_ejecutado.setText("-")
+        self.label_recomendacion_modo.setText("-")
+        self.label_ganador_modo.setText("-")
+        self.label_score_basico.setText("-")
+        self.label_score_pro.setText("-")
+        self.label_detalle_comparacion.setText("-")
+
         self.label_preview_pdf.setPixmap(QPixmap())
         self.label_preview_pdf.setText("Aún no hay vista previa disponible.")
         self.pixmap_preview_original = None
+
         self.texto_completo.setPlainText("")
         self.texto_ocr_completo.setPlainText("")
         self.texto_revisado.setPlainText("")
