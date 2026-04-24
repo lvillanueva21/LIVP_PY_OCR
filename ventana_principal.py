@@ -38,6 +38,15 @@ class VentanaPrincipal(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.exportador = ExportadorResultados()
+
+        from exportador_excel import ExportadorExcel
+        from guardador_pdf_pro import GuardadorPDFPro
+        from historial_analisis import HistorialAnalisis
+
+        self.exportador_excel = ExportadorExcel()
+        self.guardador_pdf_pro = GuardadorPDFPro()
+        self.historial_analisis = HistorialAnalisis()
+
         self.resultado_actual = None
         self.resultado_basico_actual = None
         self.resultado_pro_actual = None
@@ -102,6 +111,13 @@ class VentanaPrincipal(QMainWindow):
         self.boton_seleccionar = QPushButton("Seleccionar PDF")
         self.boton_seleccionar.clicked.connect(self.seleccionar_pdf)
 
+        fila_superior.addWidget(self.input_ruta, 1)
+        fila_superior.addWidget(self.selector_modo)
+        fila_superior.addWidget(self.boton_seleccionar)
+
+        fila_exportaciones = QHBoxLayout()
+        fila_exportaciones.setSpacing(10)
+
         self.boton_exportar_json = QPushButton("Exportar JSON")
         self.boton_exportar_json.clicked.connect(self.exportar_json)
         self.boton_exportar_json.setEnabled(False)
@@ -110,11 +126,24 @@ class VentanaPrincipal(QMainWindow):
         self.boton_exportar_txt.clicked.connect(self.exportar_txt)
         self.boton_exportar_txt.setEnabled(False)
 
-        fila_superior.addWidget(self.input_ruta, 1)
-        fila_superior.addWidget(self.selector_modo)
-        fila_superior.addWidget(self.boton_seleccionar)
-        fila_superior.addWidget(self.boton_exportar_json)
-        fila_superior.addWidget(self.boton_exportar_txt)
+        self.boton_exportar_excel_actual = QPushButton("Exportar Excel actual")
+        self.boton_exportar_excel_actual.clicked.connect(self.exportar_excel_actual)
+        self.boton_exportar_excel_actual.setEnabled(False)
+
+        self.boton_exportar_excel_historial = QPushButton("Exportar Excel historial")
+        self.boton_exportar_excel_historial.clicked.connect(self.exportar_excel_historial)
+        self.boton_exportar_excel_historial.setEnabled(self.historial_analisis.existe_historial())
+
+        self.boton_guardar_pdf_optimizado = QPushButton("Guardar PDF optimizado")
+        self.boton_guardar_pdf_optimizado.clicked.connect(self.guardar_pdf_optimizado)
+        self.boton_guardar_pdf_optimizado.setEnabled(False)
+
+        fila_exportaciones.addWidget(self.boton_exportar_json)
+        fila_exportaciones.addWidget(self.boton_exportar_txt)
+        fila_exportaciones.addWidget(self.boton_exportar_excel_actual)
+        fila_exportaciones.addWidget(self.boton_exportar_excel_historial)
+        fila_exportaciones.addWidget(self.boton_guardar_pdf_optimizado)
+        fila_exportaciones.addStretch()
 
         fila_progreso = QHBoxLayout()
         fila_progreso.setSpacing(10)
@@ -134,6 +163,7 @@ class VentanaPrincipal(QMainWindow):
         etiqueta_drop.setObjectName("diagnostico_secundario")
 
         layout_principal.addLayout(fila_superior)
+        layout_principal.addLayout(fila_exportaciones)
         layout_principal.addLayout(fila_progreso)
         layout_principal.addWidget(etiqueta_drop)
 
@@ -740,6 +770,20 @@ class VentanaPrincipal(QMainWindow):
         self._actualizar_progreso(100, "Procesamiento completado.")
         self._mostrar_notificacion("El documento fue analizado correctamente.", "ok")
 
+        try:
+            self.historial_analisis.guardar_registro(
+                resultado_mostrado,
+                resultado_basico=resultado_basico,
+                resultado_pro=resultado_pro,
+                comparacion=comparacion,
+            )
+            self.boton_exportar_excel_historial.setEnabled(True)
+        except Exception as error:
+            self._mostrar_notificacion(
+                f"El análisis terminó, pero no se pudo guardar en historial. Detalle: {error}",
+                "alerta",
+            )
+
         if self.dialogo_progreso is not None:
             self.dialogo_progreso.finalizar(True)
 
@@ -904,6 +948,105 @@ class VentanaPrincipal(QMainWindow):
             self._mostrar_notificacion(mensaje, "error")
             QMessageBox.critical(self, "Error al exportar TXT", mensaje)
 
+    def exportar_excel_actual(self) -> None:
+        if self.resultado_actual is None:
+            QMessageBox.information(self, "Sin resultados", "Primero debes analizar un documento.")
+            return
+
+        ruta, _ = QFileDialog.getSaveFileName(
+            self,
+            "Guardar análisis como Excel",
+            f"analisis_{Path(self.resultado_actual.nombre_archivo).stem}.xlsx",
+            "Archivos Excel (*.xlsx)",
+        )
+
+        if not ruta:
+            return
+
+        ruta_path = Path(ruta)
+        if ruta_path.suffix.lower() != ".xlsx":
+            ruta_path = ruta_path.with_suffix(".xlsx")
+
+        try:
+            self.exportador_excel.exportar_documento(
+                self.resultado_actual,
+                str(ruta_path),
+                resultado_basico=self.resultado_basico_actual,
+                resultado_pro=self.resultado_pro_actual,
+                comparacion=self.comparacion_actual,
+            )
+            self._mostrar_notificacion("Exportación Excel del documento completada.", "ok")
+            self.statusBar().showMessage(f"Archivo Excel guardado en: {ruta_path}")
+        except Exception as error:
+            mensaje = f"No se pudo exportar el Excel del documento. Detalle: {error}"
+            self._mostrar_notificacion(mensaje, "error")
+            QMessageBox.critical(self, "Error al exportar Excel", mensaje)
+
+    def exportar_excel_historial(self) -> None:
+        registros = self.historial_analisis.leer_registros()
+        if not registros:
+            QMessageBox.information(self, "Sin historial", "Aún no hay historial de análisis para exportar.")
+            return
+
+        ruta, _ = QFileDialog.getSaveFileName(
+            self,
+            "Guardar historial como Excel",
+            "historial_analisis.xlsx",
+            "Archivos Excel (*.xlsx)",
+        )
+
+        if not ruta:
+            return
+
+        ruta_path = Path(ruta)
+        if ruta_path.suffix.lower() != ".xlsx":
+            ruta_path = ruta_path.with_suffix(".xlsx")
+
+        try:
+            self.exportador_excel.exportar_historial(registros, str(ruta_path))
+            self._mostrar_notificacion("Exportación Excel del historial completada.", "ok")
+            self.statusBar().showMessage(f"Historial Excel guardado en: {ruta_path}")
+        except Exception as error:
+            mensaje = f"No se pudo exportar el historial Excel. Detalle: {error}"
+            self._mostrar_notificacion(mensaje, "error")
+            QMessageBox.critical(self, "Error al exportar historial Excel", mensaje)
+
+    def guardar_pdf_optimizado(self) -> None:
+        resultado_pro = self.resultado_pro_actual
+        if resultado_pro is None and self.resultado_actual is not None and self.resultado_actual.modo_analisis == ModoAnalisis.PRO:
+            resultado_pro = self.resultado_actual
+
+        if resultado_pro is None:
+            QMessageBox.information(
+                self,
+                "Sin resultado PRO",
+                "Necesitas ejecutar el modo Pro o Comparar ambos para guardar un PDF optimizado.",
+            )
+            return
+
+        ruta, _ = QFileDialog.getSaveFileName(
+            self,
+            "Guardar PDF optimizado",
+            f"optimizado_{Path(resultado_pro.nombre_archivo).stem}.pdf",
+            "Archivos PDF (*.pdf)",
+        )
+
+        if not ruta:
+            return
+
+        ruta_path = Path(ruta)
+        if ruta_path.suffix.lower() != ".pdf":
+            ruta_path = ruta_path.with_suffix(".pdf")
+
+        try:
+            self.guardador_pdf_pro.guardar_pdf_optimizado(resultado_pro, str(ruta_path))
+            self._mostrar_notificacion("PDF optimizado guardado correctamente.", "ok")
+            self.statusBar().showMessage(f"PDF optimizado guardado en: {ruta_path}")
+        except Exception as error:
+            mensaje = f"No se pudo guardar el PDF optimizado. Detalle: {error}"
+            self._mostrar_notificacion(mensaje, "error")
+            QMessageBox.critical(self, "Error al guardar PDF optimizado", mensaje)
+
     def _solicitar_ruta_exportacion(self, formato: str) -> str:
         if self.resultado_actual is None:
             return ""
@@ -1024,6 +1167,16 @@ class VentanaPrincipal(QMainWindow):
     def _actualizar_estado_exportacion(self, habilitado: bool) -> None:
         self.boton_exportar_json.setEnabled(habilitado)
         self.boton_exportar_txt.setEnabled(habilitado)
+        self.boton_exportar_excel_actual.setEnabled(habilitado)
+
+        tiene_resultado_pro = False
+        if self.resultado_pro_actual is not None:
+            tiene_resultado_pro = True
+        elif self.resultado_actual is not None and self.resultado_actual.modo_analisis == ModoAnalisis.PRO:
+            tiene_resultado_pro = True
+
+        self.boton_guardar_pdf_optimizado.setEnabled(habilitado and tiene_resultado_pro)
+        self.boton_exportar_excel_historial.setEnabled(self.historial_analisis.existe_historial())
 
     def _mostrar_resultado(self, resultado) -> None:
         self.valor_nombre.setText(resultado.nombre_archivo)

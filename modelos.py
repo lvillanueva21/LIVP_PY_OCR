@@ -26,6 +26,7 @@ class ResultadoPagina:
     ocr_tiempo_total_ms: int = 0
     ocr_tiempo_ocr_ms: int = 0
     ocr_variante_ganadora: str = ""
+    ocr_variante_clave: str = ""
     ocr_numero_intentos: int = 0
     ocr_score_estimado: float = 0.0
     ocr_dificultad: str = ""

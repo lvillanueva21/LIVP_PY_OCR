@@ -135,6 +135,7 @@ class ExportadorResultados:
                     "ocr_tiempo_total_ms": pagina.ocr_tiempo_total_ms,
                     "ocr_tiempo_ocr_ms": pagina.ocr_tiempo_ocr_ms,
                     "ocr_variante_ganadora": pagina.ocr_variante_ganadora,
+                    "ocr_variante_clave": pagina.ocr_variante_clave,
                     "ocr_numero_intentos": pagina.ocr_numero_intentos,
                     "ocr_score_estimado": pagina.ocr_score_estimado,
                     "ocr_dificultad": pagina.ocr_dificultad,

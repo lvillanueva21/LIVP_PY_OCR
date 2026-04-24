@@ -160,6 +160,7 @@ class ServicioOCRPro(ServicioOCR):
                         pagina_resultado.ocr_tiempo_total_ms = tiempo_total_pagina_ms
                         pagina_resultado.ocr_tiempo_ocr_ms = tiempo_ocr_acumulado
                         pagina_resultado.ocr_variante_ganadora = mejor_resultado["variante"].nombre
+                        pagina_resultado.ocr_variante_clave = mejor_resultado["variante"].clave
                         pagina_resultado.ocr_numero_intentos = intentos_realizados
                         pagina_resultado.ocr_score_estimado = mejor_resultado["score"]
                         pagina_resultado.ocr_dificultad = mejor_resultado["dificultad"]

@@ -174,6 +174,7 @@ class ServicioOCR:
                     pagina_resultado.ocr_tiempo_total_ms = evaluacion["tiempo_total_ms"]
                     pagina_resultado.ocr_tiempo_ocr_ms = evaluacion["tiempo_ocr_ms"]
                     pagina_resultado.ocr_variante_ganadora = "Básico estándar"
+                    pagina_resultado.ocr_variante_clave = "basico_estandar"
                     pagina_resultado.ocr_numero_intentos = 1
                     pagina_resultado.ocr_score_estimado = evaluacion["score"]
                     pagina_resultado.ocr_dificultad = evaluacion["dificultad"]
