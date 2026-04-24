@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Iterable
 
 from metricas_analisis import (
@@ -14,22 +15,9 @@ class ComparadorAnalisis:
     TOTAL_CAMPOS_ESPERADOS = 8
 
     def construir_metricas_paginas(self, resultado) -> list[MetricaPaginaModo]:
-        paginas = resultado.resumen_paginas or []
-        tiempo_total = getattr(resultado, "tiempo_total_ms", 0)
-        tiempo_por_pagina = int(tiempo_total / max(1, len(paginas)))
-
         metricas = []
-        for pagina in paginas:
-            observaciones = []
 
-            if pagina.codigo_diagnostico == "ocr_recomendado":
-                observaciones.append("Página candidata a OCR.")
-            elif pagina.codigo_diagnostico == "mixta":
-                observaciones.append("Página mixta o híbrida.")
-
-            if pagina.ocr_error:
-                observaciones.append(f"OCR con error: {pagina.ocr_error}")
-
+        for pagina in resultado.resumen_paginas or []:
             fuente_texto = "sin_texto"
             if pagina.tiene_texto and pagina.texto_extraido.strip():
                 fuente_texto = "texto_digital"
@@ -38,6 +26,19 @@ class ComparadorAnalisis:
 
             caracteres_digital = len((pagina.texto_extraido or "").strip())
             caracteres_ocr = len((pagina.texto_ocr or "").strip())
+            total_caracteres_utiles = max(caracteres_digital, caracteres_ocr)
+
+            observaciones = []
+            if pagina.codigo_diagnostico == "ocr_recomendado":
+                observaciones.append("Página candidata a OCR.")
+            elif pagina.codigo_diagnostico == "mixta":
+                observaciones.append("Página mixta o híbrida.")
+
+            if pagina.ocr_error:
+                observaciones.append(f"OCR con error: {pagina.ocr_error}")
+
+            if pagina.ocr_observaciones:
+                observaciones.extend(pagina.ocr_observaciones)
 
             metricas.append(
                 MetricaPaginaModo(
@@ -45,10 +46,16 @@ class ComparadorAnalisis:
                     fuente_texto=fuente_texto,
                     caracteres_texto_digital=caracteres_digital,
                     caracteres_texto_ocr=caracteres_ocr,
-                    total_caracteres_utiles=max(caracteres_digital, caracteres_ocr),
+                    total_caracteres_utiles=total_caracteres_utiles,
+                    cantidad_palabras=pagina.ocr_cantidad_palabras,
+                    confianza_ocr_promedio=pagina.ocr_confianza_promedio,
+                    tiempo_total_ms=pagina.ocr_tiempo_total_ms,
+                    tiempo_ocr_ms=pagina.ocr_tiempo_ocr_ms,
+                    variante_ganadora=pagina.ocr_variante_ganadora,
+                    numero_intentos=pagina.ocr_numero_intentos,
+                    score_pagina=pagina.ocr_score_estimado,
                     cantidad_campos_detectados=0,
-                    tiempo_estimado_ms=tiempo_por_pagina,
-                    observaciones=observaciones,
+                    observaciones=self._limpiar_lista(observaciones),
                 )
             )
 
@@ -56,6 +63,7 @@ class ComparadorAnalisis:
 
     def construir_metricas_documento(self, resultado) -> MetricaDocumentoModo:
         paginas = resultado.resumen_paginas or []
+        metricas_paginas = self.construir_metricas_paginas(resultado)
         campos_detectados = sum(1 for campo in resultado.campos_extraidos if campo.detectado)
 
         paginas_con_texto_digital = sum(1 for pagina in paginas if pagina.tiene_texto)
@@ -67,11 +75,17 @@ class ComparadorAnalisis:
             or (resultado.texto_ocr_completo or "").strip()
         )
 
+        total_palabras = sum(metrica.cantidad_palabras for metrica in metricas_paginas)
+        numero_total_intentos = sum(metrica.numero_intentos for metrica in metricas_paginas)
+
+        confs = [m.confianza_ocr_promedio for m in metricas_paginas if m.confianza_ocr_promedio > 0]
+        confianza_ocr_promedio = round(sum(confs) / len(confs), 2) if confs else float(resultado.confianza_diagnostico)
+
         score_campos = self._calcular_score_campos(campos_detectados)
-        score_legibilidad = self._calcular_score_legibilidad(texto_fuente)
-        score_confianza = self._calcular_score_confianza(resultado)
-        score_texto_util = self._calcular_score_texto_util(texto_fuente)
-        score_estabilidad = self._calcular_score_estabilidad(resultado)
+        score_legibilidad = self._calcular_score_legibilidad(texto_fuente, metricas_paginas)
+        score_confianza = self._calcular_score_confianza(confianza_ocr_promedio, resultado)
+        score_texto_util = self._calcular_score_texto_util(texto_fuente, total_palabras)
+        score_estabilidad = self._calcular_score_estabilidad(resultado, metricas_paginas)
         score_velocidad = self._calcular_score_velocidad(getattr(resultado, "tiempo_total_ms", 0))
 
         score_total = self._combinar_scores(
@@ -98,6 +112,9 @@ class ComparadorAnalisis:
             paginas_con_texto_digital=paginas_con_texto_digital,
             paginas_con_ocr=paginas_con_ocr,
             total_caracteres_utiles=len(texto_fuente),
+            total_palabras=total_palabras,
+            confianza_ocr_promedio=confianza_ocr_promedio,
+            numero_total_intentos=numero_total_intentos,
             cantidad_campos_detectados=campos_detectados,
             tiempo_total_ms=getattr(resultado, "tiempo_total_ms", 0),
             score_campos=score_campos,
@@ -114,12 +131,22 @@ class ComparadorAnalisis:
         paginas = resultado.resumen_paginas or []
         paginas_sin_texto = sum(1 for pagina in paginas if not pagina.tiene_texto)
         paginas_mixtas = sum(1 for pagina in paginas if pagina.codigo_diagnostico == "mixta")
+        paginas_con_bajo_score = sum(1 for pagina in paginas if pagina.ocr_score_estimado and pagina.ocr_score_estimado < 55)
+        paginas_con_problemas = sum(1 for pagina in paginas if pagina.ocr_observaciones)
+
+        if resultado.modo_analisis == ModoAnalisis.PRO:
+            if paginas_con_bajo_score > 0:
+                return "Modo Pro ejecutado. Aun así se recomienda revisión manual en algunas páginas."
+            return "Modo Pro ejecutado correctamente."
 
         if resultado.codigo_diagnostico_general == "ocr_recomendado":
             return "Se recomienda modo Pro: predominan páginas escaneadas y OCR intensivo."
 
         if paginas_mixtas > 0 or paginas_sin_texto >= max(2, int(resultado.cantidad_paginas * 0.3)):
             return "Se recomienda modo Pro: hay páginas mixtas o sin texto suficiente."
+
+        if paginas_con_problemas > 0 or paginas_con_bajo_score > 0:
+            return "Se recomienda modo Pro: se detectaron páginas con legibilidad incierta."
 
         return "Modo Básico suficiente para este documento, salvo que quieras comparar."
 
@@ -147,9 +174,9 @@ class ComparadorAnalisis:
         recomendacion = resultado_pro.recomendacion_modo or resultado_basico.recomendacion_modo
         observaciones = []
 
-        if getattr(resultado_pro, "es_provisional", False):
+        if resultado_pro.metricas_documento_modo and resultado_pro.metricas_documento_modo.numero_total_intentos > 0:
             observaciones.append(
-                "El modo Pro aún es provisional en esta fase y reutiliza la base del modo Básico."
+                f"Modo Pro probó {resultado_pro.metricas_documento_modo.numero_total_intentos} intento(s) OCR."
             )
 
         return ResumenComparacionAnalisis(
@@ -166,37 +193,40 @@ class ComparadorAnalisis:
     def _calcular_score_campos(self, campos_detectados: int) -> float:
         return round((campos_detectados / self.TOTAL_CAMPOS_ESPERADOS) * 100, 2)
 
-    def _calcular_score_legibilidad(self, texto: str) -> float:
+    def _calcular_score_legibilidad(self, texto: str, metricas_paginas: list[MetricaPaginaModo]) -> float:
         if not texto:
             return 0.0
 
         caracteres = len(texto)
         letras_numeros = sum(1 for caracter in texto if caracter.isalnum())
         ratio_util = letras_numeros / max(1, caracteres)
+        score_base = ratio_util * 70
 
-        score = ratio_util * 100
-        return round(max(0.0, min(100.0, score)), 2)
+        scores_paginas = [m.score_pagina for m in metricas_paginas if m.score_pagina > 0]
+        promedio_paginas = sum(scores_paginas) / len(scores_paginas) if scores_paginas else 0
 
-    def _calcular_score_confianza(self, resultado) -> float:
-        paginas = resultado.resumen_paginas or []
-        if not paginas:
-            return float(resultado.confianza_diagnostico)
+        score = min(100.0, score_base + (promedio_paginas * 0.3))
+        return round(max(0.0, score), 2)
 
-        promedio_paginas = sum(pagina.confianza for pagina in paginas) / len(paginas)
-        score = (promedio_paginas + float(resultado.confianza_diagnostico)) / 2
-        return round(max(0.0, min(100.0, score)), 2)
+    def _calcular_score_confianza(self, confianza_ocr_promedio: float, resultado) -> float:
+        base = confianza_ocr_promedio if confianza_ocr_promedio > 0 else float(resultado.confianza_diagnostico)
+        return round(max(0.0, min(100.0, base)), 2)
 
-    def _calcular_score_texto_util(self, texto: str) -> float:
+    def _calcular_score_texto_util(self, texto: str, total_palabras: int) -> float:
         longitud = len(texto.strip())
         if longitud <= 0:
             return 0.0
 
-        score = min(100.0, (longitud / 2000) * 100)
-        return round(score, 2)
+        score_longitud = min(60.0, (longitud / 2000) * 60)
+        score_palabras = min(40.0, (total_palabras / 250) * 40)
+        return round(score_longitud + score_palabras, 2)
 
-    def _calcular_score_estabilidad(self, resultado) -> float:
+    def _calcular_score_estabilidad(self, resultado, metricas_paginas: list[MetricaPaginaModo]) -> float:
         score = 100.0
-        score -= len(resultado.errores_ocr or []) * 15
+        score -= len(resultado.errores_ocr or []) * 12
+
+        paginas_con_muchos_intentos = sum(1 for m in metricas_paginas if m.numero_intentos >= 4)
+        score -= paginas_con_muchos_intentos * 4
 
         if resultado.codigo_estado_ocr == "error":
             score -= 25
@@ -221,7 +251,9 @@ class ComparadorAnalisis:
             return 70.0
         if tiempo_total_ms <= 20000:
             return 55.0
-        return 40.0
+        if tiempo_total_ms <= 40000:
+            return 42.0
+        return 30.0
 
     def _combinar_scores(
         self,

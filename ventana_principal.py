@@ -197,7 +197,7 @@ class VentanaPrincipal(QMainWindow):
         grupo_paginas = QGroupBox("Detalle por página")
         layout_paginas = QVBoxLayout(grupo_paginas)
 
-        self.tabla_paginas = QTableWidget(0, 6)
+        self.tabla_paginas = QTableWidget(0, 9)
         self.tabla_paginas.setHorizontalHeaderLabels(
             [
                 "Página",
@@ -206,6 +206,9 @@ class VentanaPrincipal(QMainWindow):
                 "Imágenes",
                 "Cobertura imagen",
                 "Diagnóstico",
+                "Score Básico",
+                "Score Pro",
+                "Ganador",
             ]
         )
         self.tabla_paginas.verticalHeader().setVisible(False)
@@ -219,6 +222,9 @@ class VentanaPrincipal(QMainWindow):
         self.tabla_paginas.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
         self.tabla_paginas.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
         self.tabla_paginas.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)
+        self.tabla_paginas.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)
+        self.tabla_paginas.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeToContents)
+        self.tabla_paginas.horizontalHeader().setSectionResizeMode(8, QHeaderView.ResizeToContents)
         self.tabla_paginas.horizontalHeader().setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
         layout_paginas.addWidget(self.tabla_paginas)
@@ -267,7 +273,7 @@ class VentanaPrincipal(QMainWindow):
         splitter_horizontal.addWidget(grupo_campos)
         splitter_horizontal.setStretchFactor(0, 3)
         splitter_horizontal.setStretchFactor(1, 2)
-        splitter_horizontal.setSizes([780, 520])
+        splitter_horizontal.setSizes([900, 420])
 
         layout.addWidget(splitter_horizontal, 1)
         return contenedor
@@ -1066,11 +1072,27 @@ class VentanaPrincipal(QMainWindow):
         self.valor_estado_ocr.style().unpolish(self.valor_estado_ocr)
         self.valor_estado_ocr.style().polish(self.valor_estado_ocr)
 
+        mapa_comparacion_paginas = {}
+        if self.comparacion_actual is not None:
+            for comparacion_pagina in self.comparacion_actual.comparaciones_paginas:
+                mapa_comparacion_paginas[comparacion_pagina.numero_pagina] = comparacion_pagina
+
         self.tabla_paginas.setRowCount(0)
 
         for pagina in resultado.resumen_paginas:
             fila = self.tabla_paginas.rowCount()
             self.tabla_paginas.insertRow(fila)
+
+            comparacion_pagina = mapa_comparacion_paginas.get(pagina.numero_pagina)
+
+            score_basico = "-"
+            score_pro = "-"
+            ganador_pagina = "-"
+
+            if comparacion_pagina is not None:
+                score_basico = f"{comparacion_pagina.score_basico:.2f}"
+                score_pro = f"{comparacion_pagina.score_pro:.2f}"
+                ganador_pagina = comparacion_pagina.etiqueta_ganador or "-"
 
             item_pagina = QTableWidgetItem(str(pagina.numero_pagina))
             item_texto = QTableWidgetItem("Sí" if pagina.tiene_texto else "No")
@@ -1078,12 +1100,28 @@ class VentanaPrincipal(QMainWindow):
             item_imagenes = QTableWidgetItem(str(pagina.cantidad_imagenes))
             item_cobertura = QTableWidgetItem(f"{pagina.cobertura_imagen * 100:.0f}%")
             item_diagnostico = QTableWidgetItem(f"{pagina.diagnostico} ({pagina.confianza}%)")
+            item_score_basico = QTableWidgetItem(score_basico)
+            item_score_pro = QTableWidgetItem(score_pro)
+            item_ganador = QTableWidgetItem(ganador_pagina)
+
+            if comparacion_pagina is not None:
+                tooltip = comparacion_pagina.motivo
+                if comparacion_pagina.revision_manual_recomendada:
+                    tooltip += "\nRevisión manual recomendada."
+                if comparacion_pagina.observaciones:
+                    tooltip += "\n" + "\n".join(comparacion_pagina.observaciones)
+
+                item_ganador.setToolTip(tooltip)
+                item_diagnostico.setToolTip(tooltip)
 
             item_pagina.setTextAlignment(Qt.AlignCenter)
             item_texto.setTextAlignment(Qt.AlignCenter)
             item_caracteres.setTextAlignment(Qt.AlignCenter)
             item_imagenes.setTextAlignment(Qt.AlignCenter)
             item_cobertura.setTextAlignment(Qt.AlignCenter)
+            item_score_basico.setTextAlignment(Qt.AlignCenter)
+            item_score_pro.setTextAlignment(Qt.AlignCenter)
+            item_ganador.setTextAlignment(Qt.AlignCenter)
 
             self.tabla_paginas.setItem(fila, 0, item_pagina)
             self.tabla_paginas.setItem(fila, 1, item_texto)
@@ -1091,6 +1129,9 @@ class VentanaPrincipal(QMainWindow):
             self.tabla_paginas.setItem(fila, 3, item_imagenes)
             self.tabla_paginas.setItem(fila, 4, item_cobertura)
             self.tabla_paginas.setItem(fila, 5, item_diagnostico)
+            self.tabla_paginas.setItem(fila, 6, item_score_basico)
+            self.tabla_paginas.setItem(fila, 7, item_score_pro)
+            self.tabla_paginas.setItem(fila, 8, item_ganador)
 
         self._cargar_textos(resultado)
         self._cargar_campos_extraidos(resultado)
@@ -1173,28 +1214,34 @@ class VentanaPrincipal(QMainWindow):
 
         score_basico = "-"
         if self.resultado_basico_actual and self.resultado_basico_actual.metricas_documento_modo:
-            score_basico = str(self.resultado_basico_actual.metricas_documento_modo.score_total)
+            score_basico = f"{self.resultado_basico_actual.metricas_documento_modo.score_total:.2f}"
 
         score_pro = "-"
         if self.resultado_pro_actual and self.resultado_pro_actual.metricas_documento_modo:
-            score_pro = str(self.resultado_pro_actual.metricas_documento_modo.score_total)
+            score_pro = f"{self.resultado_pro_actual.metricas_documento_modo.score_total:.2f}"
 
         self.label_score_basico.setText(score_basico)
         self.label_score_pro.setText(score_pro)
 
         if self.comparacion_actual is not None:
             self.label_ganador_modo.setText(self.comparacion_actual.etiqueta_ganador or "-")
+
             detalle = self.comparacion_actual.motivo or "-"
+            if self.comparacion_actual.revision_manual_recomendada and self.comparacion_actual.motivo_revision_manual:
+                detalle += f"\n{self.comparacion_actual.motivo_revision_manual}"
+
             if self.comparacion_actual.observaciones:
                 detalle += "\n" + "\n".join(self.comparacion_actual.observaciones)
+
             self.label_detalle_comparacion.setText(detalle)
         else:
             self.label_ganador_modo.setText("Sin comparación")
             metrica = self.resultado_actual.metricas_documento_modo
             if metrica is not None:
                 detalle = (
-                    f"Score total estimado: {metrica.score_total}\n"
+                    f"Score total estimado: {metrica.score_total:.2f}\n"
                     f"Campos detectados: {metrica.cantidad_campos_detectados}\n"
+                    f"Confianza OCR promedio: {metrica.confianza_ocr_promedio:.2f}\n"
                     f"Tiempo total: {metrica.tiempo_total_ms} ms"
                 )
                 if metrica.observaciones:

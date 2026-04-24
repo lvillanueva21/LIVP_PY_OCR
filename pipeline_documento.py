@@ -1,8 +1,7 @@
-from copy import deepcopy
 from time import perf_counter
 
 from analizador_pdf import AnalizadorPDF
-from comparador_analisis import ComparadorAnalisis
+from comparador_resultados import ComparadorResultados
 from etapas_proceso import (
     ESTADO_ADVERTENCIA,
     ESTADO_COMPLETADA,
@@ -23,6 +22,7 @@ from modos_analisis import ModoAnalisis
 from modelos import ResultadoAnalisisPDF
 from procesador_imagen import ProcesadorImagen
 from servicio_ocr import ServicioOCR
+from servicio_ocr_pro import ServicioOCRPro
 
 
 class PipelineDocumento:
@@ -31,14 +31,16 @@ class PipelineDocumento:
         analizador: AnalizadorPDF | None = None,
         procesador_imagen: ProcesadorImagen | None = None,
         servicio_ocr: ServicioOCR | None = None,
+        servicio_ocr_pro: ServicioOCRPro | None = None,
         extractor_poliza: ExtractorPoliza | None = None,
-        comparador_analisis: ComparadorAnalisis | None = None,
+        comparador_resultados: ComparadorResultados | None = None,
     ) -> None:
         self.analizador = analizador or AnalizadorPDF()
         self.procesador_imagen = procesador_imagen or ProcesadorImagen()
         self.servicio_ocr = servicio_ocr or ServicioOCR()
+        self.servicio_ocr_pro = servicio_ocr_pro or ServicioOCRPro()
         self.extractor_poliza = extractor_poliza or ExtractorPoliza()
-        self.comparador_analisis = comparador_analisis or ComparadorAnalisis()
+        self.comparador_resultados = comparador_resultados or ComparadorResultados()
 
     def procesar(
         self,
@@ -48,7 +50,44 @@ class PipelineDocumento:
         cancelador=None,
         modo_etiqueta: str = "Básico",
     ) -> ResultadoAnalisisPDF:
+        return self._procesar_interno(
+            ruta_archivo,
+            modo=ModoAnalisis.BASICO,
+            callback=callback,
+            callback_etapa=callback_etapa,
+            cancelador=cancelador,
+            modo_etiqueta=modo_etiqueta,
+        )
+
+    def procesar_pro(
+        self,
+        ruta_archivo: str,
+        callback=None,
+        callback_etapa=None,
+        cancelador=None,
+        modo_etiqueta: str = "Pro",
+    ) -> ResultadoAnalisisPDF:
+        return self._procesar_interno(
+            ruta_archivo,
+            modo=ModoAnalisis.PRO,
+            callback=callback,
+            callback_etapa=callback_etapa,
+            cancelador=cancelador,
+            modo_etiqueta=modo_etiqueta,
+        )
+
+    def _procesar_interno(
+        self,
+        ruta_archivo: str,
+        *,
+        modo: str,
+        callback=None,
+        callback_etapa=None,
+        cancelador=None,
+        modo_etiqueta: str = "Básico",
+    ) -> ResultadoAnalisisPDF:
         inicio = perf_counter()
+        es_modo_pro = modo == ModoAnalisis.PRO
 
         self._verificar_cancelacion(cancelador)
         self._emitir_etapa(
@@ -99,7 +138,8 @@ class PipelineDocumento:
         resultado.requiere_preprocesamiento = requiere_preprocesamiento
         resultado.acciones_preparacion = acciones_preparacion
 
-        codigo_estado_base, estado_base, detalle_base, apto_para_ocr = self.servicio_ocr.obtener_estado(
+        servicio_activo = self.servicio_ocr_pro if es_modo_pro else self.servicio_ocr
+        codigo_estado_base, estado_base, detalle_base, apto_para_ocr = servicio_activo.obtener_estado(
             resultado
         )
 
@@ -107,11 +147,14 @@ class PipelineDocumento:
         resultado.estado_ocr = estado_base
         resultado.detalle_ocr = detalle_base
         resultado.apto_para_ocr = apto_para_ocr
-        resultado.motor_ocr = self.servicio_ocr.motor_ocr
+        resultado.motor_ocr = servicio_activo.motor_ocr
 
         detalle_evaluacion = detalle_base
+        if es_modo_pro and apto_para_ocr:
+            detalle_evaluacion += " Se probarán variantes adaptativas por página según dificultad."
         if acciones_preparacion:
             detalle_evaluacion += f" Preparación sugerida: {' | '.join(acciones_preparacion)}."
+
         self._emitir_etapa(
             callback_etapa,
             ETAPA_EVALUACION_OCR,
@@ -122,7 +165,7 @@ class PipelineDocumento:
         self._verificar_cancelacion(cancelador)
 
         if not resultado.apto_para_ocr:
-            resultado.ocr_disponible = self.servicio_ocr.esta_configurado()
+            resultado.ocr_disponible = servicio_activo.esta_configurado()
             self._emitir_etapa(
                 callback_etapa,
                 ETAPA_OCR,
@@ -138,14 +181,14 @@ class PipelineDocumento:
             resultado.tiempo_total_ms = int((perf_counter() - inicio) * 1000)
             return resultado
 
-        if not self.servicio_ocr.esta_configurado():
+        if not servicio_activo.esta_configurado():
             resultado.codigo_estado_ocr = "no_disponible"
             resultado.estado_ocr = "OCR no disponible"
             resultado.detalle_ocr = self._construir_detalle_ocr(
                 "Tesseract no está instalado o no está accesible desde el sistema.",
                 acciones_preparacion,
             )
-            resultado.motor_ocr = self.servicio_ocr.motor_ocr
+            resultado.motor_ocr = servicio_activo.motor_ocr
             resultado.ocr_disponible = False
 
             self._emitir_etapa(
@@ -169,13 +212,21 @@ class PipelineDocumento:
             ESTADO_EN_CURSO,
             f"Ejecutando OCR en modo {modo_etiqueta}.",
         )
-        self._emitir_progreso(callback, 28, "Preparando OCR local...")
-        resultado = self.servicio_ocr.ejecutar_ocr(
-            resultado,
-            self.procesador_imagen,
-            callback=callback,
-            cancelador=cancelador,
-        )
+        self._emitir_progreso(callback, 28, "Preparando OCR...")
+
+        if es_modo_pro:
+            resultado = self.servicio_ocr_pro.ejecutar_ocr_pro(
+                resultado,
+                callback=callback,
+                cancelador=cancelador,
+            )
+        else:
+            resultado = self.servicio_ocr.ejecutar_ocr(
+                resultado,
+                self.procesador_imagen,
+                callback=callback,
+                cancelador=cancelador,
+            )
 
         resultado.detalle_ocr = self._construir_detalle_ocr(
             resultado.detalle_ocr,
@@ -183,9 +234,7 @@ class PipelineDocumento:
         )
 
         estado_ocr_etapa = ESTADO_COMPLETADA
-        if resultado.codigo_estado_ocr in {"parcial", "no_disponible"}:
-            estado_ocr_etapa = ESTADO_ADVERTENCIA
-        elif resultado.codigo_estado_ocr == "error":
+        if resultado.codigo_estado_ocr in {"parcial", "no_disponible", "error"}:
             estado_ocr_etapa = ESTADO_ADVERTENCIA
 
         self._emitir_etapa(
@@ -202,6 +251,12 @@ class PipelineDocumento:
             cancelador=cancelador,
         )
         resultado.tiempo_total_ms = int((perf_counter() - inicio) * 1000)
+
+        if es_modo_pro:
+            resultado.observaciones_modo.append(
+                "Modo Pro ejecutó filtros adaptativos sobre páginas candidatas."
+            )
+
         return resultado
 
     def procesar_segun_modo(
@@ -251,16 +306,13 @@ class PipelineDocumento:
             return resultado_basico, resultado_basico, None, None
 
         if modo == ModoAnalisis.PRO:
-            resultado_base = self.procesar(
+            resultado_pro = self.procesar_pro(
                 ruta_archivo,
                 callback=callback,
                 callback_etapa=callback_etapa,
                 cancelador=cancelador,
                 modo_etiqueta="Pro",
             )
-            self._verificar_cancelacion(cancelador)
-
-            resultado_pro = self._crear_resultado_provisional(resultado_base)
             self._finalizar_modo(resultado_pro, ModoAnalisis.PRO)
 
             self._emitir_etapa(
@@ -273,12 +325,12 @@ class PipelineDocumento:
                 callback_etapa,
                 ETAPA_FINALIZACION,
                 ESTADO_COMPLETADA,
-                "Procesamiento en modo Pro estructural completado.",
+                "Procesamiento en modo Pro completado.",
             )
             self._emitir_progreso(callback, 100, "Procesamiento completado.")
             return resultado_pro, None, resultado_pro, None
 
-        callback_basico = self._crear_callback_rango(callback, 0, 78, "Básico")
+        callback_basico = self._crear_callback_rango(callback, 0, 48, "Básico")
         resultado_basico = self.procesar(
             ruta_archivo,
             callback=callback_basico,
@@ -289,22 +341,33 @@ class PipelineDocumento:
         self._finalizar_modo(resultado_basico, ModoAnalisis.BASICO)
 
         self._verificar_cancelacion(cancelador)
+
+        callback_pro = self._crear_callback_rango(callback, 48, 90, "Pro")
+        resultado_pro = self.procesar_pro(
+            ruta_archivo,
+            callback=callback_pro,
+            callback_etapa=callback_etapa,
+            cancelador=cancelador,
+            modo_etiqueta="Pro",
+        )
+        self._finalizar_modo(resultado_pro, ModoAnalisis.PRO)
+
+        self._verificar_cancelacion(cancelador)
         self._emitir_etapa(
             callback_etapa,
             ETAPA_COMPARACION_RESULTADOS,
             ESTADO_EN_CURSO,
-            "Construyendo resultado Pro provisional y calculando comparación.",
+            "Calculando comparación entre modo Básico y modo Pro.",
         )
-        self._emitir_progreso(callback, 86, "Preparando comparación de resultados...")
+        self._emitir_progreso(callback, 94, "Comparando resultados...")
 
-        resultado_pro = self._crear_resultado_provisional(resultado_basico)
-        self._finalizar_modo(resultado_pro, ModoAnalisis.PRO)
-
-        comparacion = self.comparador_analisis.comparar(resultado_basico, resultado_pro)
+        comparacion = self.comparador_resultados.comparar(resultado_basico, resultado_pro)
         resultado_basico.comparacion_modos = comparacion
         resultado_pro.comparacion_modos = comparacion
 
         detalle_comparacion = comparacion.motivo or "Comparación completada."
+        if comparacion.revision_manual_recomendada and comparacion.motivo_revision_manual:
+            detalle_comparacion += f" {comparacion.motivo_revision_manual}"
         if comparacion.observaciones:
             detalle_comparacion += f" {' | '.join(comparacion.observaciones)}"
 
@@ -379,21 +442,21 @@ class PipelineDocumento:
     def _finalizar_modo(self, resultado: ResultadoAnalisisPDF, modo: str) -> None:
         resultado.modo_analisis = modo
         resultado.etiqueta_modo = ModoAnalisis.etiqueta(modo)
-        resultado.recomendacion_modo = self.comparador_analisis.recomendar_modo(resultado)
-        resultado.metricas_paginas_modo = self.comparador_analisis.construir_metricas_paginas(resultado)
-        resultado.metricas_documento_modo = self.comparador_analisis.construir_metricas_documento(resultado)
+        resultado.metricas_paginas_modo = self.comparador_resultados.construir_metricas_paginas(resultado)
+        resultado.metricas_documento_modo = self.comparador_resultados.construir_metricas_documento(resultado)
+
+        recomendacion = self.comparador_resultados.recomendar_modo(resultado)
+        resultado.recomendacion_modo = recomendacion.mensaje
+        resultado.observaciones_modo = self._combinar_observaciones_modo(
+            resultado.observaciones_modo,
+            recomendacion.razones,
+            [recomendacion.motivo_revision_manual] if recomendacion.motivo_revision_manual else [],
+        )
+        resultado.es_provisional = False
 
     def _finalizar_metricas_existentes(self, resultado: ResultadoAnalisisPDF) -> None:
-        resultado.metricas_paginas_modo = self.comparador_analisis.construir_metricas_paginas(resultado)
-        resultado.metricas_documento_modo = self.comparador_analisis.construir_metricas_documento(resultado)
-
-    def _crear_resultado_provisional(self, resultado_base: ResultadoAnalisisPDF) -> ResultadoAnalisisPDF:
-        resultado_pro = deepcopy(resultado_base)
-        resultado_pro.es_provisional = True
-        resultado_pro.observaciones_modo.append(
-            "Modo Pro provisional: en esta fase aún reutiliza el flujo del modo Básico."
-        )
-        return resultado_pro
+        resultado.metricas_paginas_modo = self.comparador_resultados.construir_metricas_paginas(resultado)
+        resultado.metricas_documento_modo = self.comparador_resultados.construir_metricas_documento(resultado)
 
     def _preparar_texto_revision(self, resultado: ResultadoAnalisisPDF) -> None:
         if resultado.texto_final_revisado.strip():
@@ -415,6 +478,15 @@ class PipelineDocumento:
 
         acciones_texto = " | ".join(acciones_preparacion)
         return f"{detalle_base} Preparación sugerida: {acciones_texto}."
+
+    def _combinar_observaciones_modo(self, *grupos: list[str]) -> list[str]:
+        salida = []
+        for grupo in grupos:
+            for valor in grupo:
+                valor = (valor or "").strip()
+                if valor and valor not in salida:
+                    salida.append(valor)
+        return salida
 
     def _emitir_progreso(self, callback, valor: int, mensaje: str) -> None:
         if callback:
