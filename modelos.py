@@ -20,11 +20,18 @@ class ResultadoPagina:
     ocr_confianza_promedio: float = 0.0
     ocr_confianza_mediana: float = 0.0
     ocr_cantidad_palabras: int = 0
+    ocr_palabras_baja_confianza: int = 0
+    ocr_caracteres_totales: int = 0
+    ocr_ruido_textual: float = 0.0
     ocr_tiempo_total_ms: int = 0
     ocr_tiempo_ocr_ms: int = 0
     ocr_variante_ganadora: str = ""
     ocr_numero_intentos: int = 0
     ocr_score_estimado: float = 0.0
+    ocr_dificultad: str = ""
+    ocr_dificultad_nivel: int = 0
+    ocr_dificultad_indice: int = 0
+    ocr_requiere_revision: bool = False
     ocr_observaciones: List[str] = field(default_factory=list)
 
 

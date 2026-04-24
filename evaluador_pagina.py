@@ -1,18 +1,27 @@
-import re
-import statistics
-
 import cv2
 import numpy as np
 
+from analizador_calidad_ocr import AnalizadorCalidadOCR
+from dificultad_pagina import DificultadPagina
+from observaciones_pagina import ObservacionesPagina
+
 
 class EvaluadorPagina:
+    def __init__(
+        self,
+        analizador_calidad: AnalizadorCalidadOCR | None = None,
+        clasificador_dificultad: DificultadPagina | None = None,
+        generador_observaciones: ObservacionesPagina | None = None,
+    ) -> None:
+        self.analizador_calidad = analizador_calidad or AnalizadorCalidadOCR()
+        self.clasificador_dificultad = clasificador_dificultad or DificultadPagina()
+        self.generador_observaciones = generador_observaciones or ObservacionesPagina()
+
     def analizar_condicion_pagina(self, pagina_resultado, imagen_pil) -> dict:
         gris = np.array(imagen_pil.convert("L"))
         brillo_promedio = float(np.mean(gris))
         contraste = float(np.std(gris))
         varianza_laplaciana = float(cv2.Laplacian(gris, cv2.CV_64F).var())
-
-        observaciones = []
 
         es_oscura = brillo_promedio < 85
         es_muy_clara = brillo_promedio > 220
@@ -20,6 +29,7 @@ class EvaluadorPagina:
         probable_borroso = varianza_laplaciana < 70
         sospecha_orientacion = imagen_pil.width > imagen_pil.height * 1.35
 
+        observaciones = []
         if es_oscura:
             observaciones.append("Imagen oscura.")
         if es_muy_clara:
@@ -53,6 +63,10 @@ class EvaluadorPagina:
             "brillo_promedio": round(brillo_promedio, 2),
             "contraste": round(contraste, 2),
             "nitidez": round(varianza_laplaciana, 2),
+            "es_oscura": es_oscura,
+            "es_muy_clara": es_muy_clara,
+            "bajo_contraste": bajo_contraste,
+            "probable_borroso": probable_borroso,
             "observaciones": observaciones,
         }
 
@@ -63,71 +77,45 @@ class EvaluadorPagina:
         *,
         tiempo_total_ms: int,
         tiempo_ocr_ms: int,
-        observaciones: list[str],
+        analisis_imagen: dict,
+        numero_intentos: int,
     ) -> dict:
-        texto_limpio = (texto or "").strip()
-        caracteres_totales = len(texto_limpio)
-        caracteres_utiles = sum(1 for caracter in texto_limpio if caracter.isalnum())
-        palabras = re.findall(r"[A-Za-zÁÉÍÓÚáéíóúÑñ0-9]{2,}", texto_limpio)
-        cantidad_palabras = len(palabras)
-
-        confidencias = self._extraer_confianzas_validas(datos_ocr)
-        confianza_promedio = round(sum(confidencias) / len(confidencias), 2) if confidencias else 0.0
-        confianza_mediana = round(statistics.median(confidencias), 2) if confidencias else 0.0
-
-        ratio_util = 0.0
-        if caracteres_totales > 0:
-            ratio_util = caracteres_utiles / caracteres_totales
-
-        simbolos_raros = sum(1 for caracter in texto_limpio if not (caracter.isalnum() or caracter.isspace() or caracter in ".,:;/()-_%$#°"))
-        penalizacion_ruido = min(25.0, simbolos_raros * 0.4)
-
-        score = (
-            min(30.0, cantidad_palabras * 1.2)
-            + min(25.0, caracteres_utiles / 20.0)
-            + min(30.0, confianza_promedio * 0.35)
-            + min(15.0, ratio_util * 15.0)
-            - penalizacion_ruido
+        analisis_ocr = self.analizador_calidad.analizar(
+            texto,
+            datos_ocr,
+            tiempo_total_ms=tiempo_total_ms,
+            tiempo_ocr_ms=tiempo_ocr_ms,
         )
-        score = round(max(0.0, min(100.0, score)), 2)
 
-        observaciones_intento = list(observaciones)
-        if cantidad_palabras == 0:
-            observaciones_intento.append("OCR devolvió pocas o ninguna palabra útil.")
-        if confianza_promedio < 45 and cantidad_palabras > 0:
-            observaciones_intento.append("Confianza OCR baja.")
-        if simbolos_raros > max(10, caracteres_totales * 0.1):
-            observaciones_intento.append("Texto con alto ruido simbólico.")
+        dificultad = self.clasificador_dificultad.clasificar(
+            analisis_imagen,
+            analisis_ocr,
+            numero_intentos=numero_intentos,
+        )
+
+        observaciones = self.generador_observaciones.construir(
+            analisis_imagen,
+            analisis_ocr,
+            numero_intentos=numero_intentos,
+            dificultad=dificultad["dificultad"],
+            requiere_revision=dificultad["requiere_revision"],
+        )
 
         return {
-            "texto": texto_limpio,
-            "caracteres_totales": caracteres_totales,
-            "caracteres_utiles": caracteres_utiles,
-            "cantidad_palabras": cantidad_palabras,
-            "confianza_promedio": confianza_promedio,
-            "confianza_mediana": confianza_mediana,
-            "ratio_util": round(ratio_util, 4),
-            "score": score,
-            "tiempo_total_ms": tiempo_total_ms,
-            "tiempo_ocr_ms": tiempo_ocr_ms,
-            "observaciones": self._limpiar_observaciones(observaciones_intento),
+            "texto": analisis_ocr["texto"],
+            "caracteres_totales": analisis_ocr["caracteres_totales"],
+            "caracteres_utiles": analisis_ocr["caracteres_utiles"],
+            "cantidad_palabras": analisis_ocr["cantidad_palabras"],
+            "confianza_promedio": analisis_ocr["confianza_promedio"],
+            "confianza_mediana": analisis_ocr["confianza_mediana"],
+            "palabras_baja_confianza": analisis_ocr["palabras_baja_confianza"],
+            "ruido_textual": analisis_ocr["ruido_textual"],
+            "score": analisis_ocr["score_calidad"],
+            "tiempo_total_ms": analisis_ocr["tiempo_total_ms"],
+            "tiempo_ocr_ms": analisis_ocr["tiempo_ocr_ms"],
+            "dificultad": dificultad["dificultad"],
+            "dificultad_nivel": dificultad["nivel"],
+            "dificultad_indice": dificultad["indice"],
+            "requiere_revision": dificultad["requiere_revision"],
+            "observaciones": observaciones,
         }
-
-    def _extraer_confianzas_validas(self, datos_ocr: dict) -> list[float]:
-        salida = []
-        for valor in datos_ocr.get("conf", []):
-            try:
-                numero = float(valor)
-                if numero >= 0:
-                    salida.append(numero)
-            except Exception:
-                continue
-        return salida
-
-    def _limpiar_observaciones(self, observaciones: list[str]) -> list[str]:
-        salida = []
-        for observacion in observaciones:
-            observacion = (observacion or "").strip()
-            if observacion and observacion not in salida:
-                salida.append(observacion)
-        return salida

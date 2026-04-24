@@ -28,11 +28,8 @@ class ComparadorResultados:
         for pagina in resultado.resumen_paginas or []:
             texto_fuente, fuente_texto = self._seleccionar_texto_pagina(pagina)
             total_caracteres_utiles = len(texto_fuente.strip())
-            cantidad_palabras = self.score_extraccion.contar_palabras_utiles(texto_fuente)
-            ruido_textual = self.score_extraccion.calcular_ruido_textual(texto_fuente)
 
             observaciones = []
-
             if pagina.codigo_diagnostico == "ocr_recomendado":
                 observaciones.append("Página candidata a OCR.")
             elif pagina.codigo_diagnostico == "mixta":
@@ -44,23 +41,30 @@ class ComparadorResultados:
             if pagina.ocr_observaciones:
                 observaciones.extend(pagina.ocr_observaciones)
 
-            problemas_detectados = len(self._limpiar_lista(observaciones))
+            observaciones = self._limpiar_lista(observaciones)
 
             metrica = MetricaPaginaModo(
                 numero_pagina=pagina.numero_pagina,
                 fuente_texto=fuente_texto,
                 caracteres_texto_digital=len((pagina.texto_extraido or "").strip()),
                 caracteres_texto_ocr=len((pagina.texto_ocr or "").strip()),
+                caracteres_totales=pagina.ocr_caracteres_totales or total_caracteres_utiles,
                 total_caracteres_utiles=total_caracteres_utiles,
-                cantidad_palabras=cantidad_palabras,
+                cantidad_palabras=pagina.ocr_cantidad_palabras,
+                palabras_baja_confianza=pagina.ocr_palabras_baja_confianza,
                 confianza_ocr_promedio=pagina.ocr_confianza_promedio,
+                confianza_ocr_mediana=pagina.ocr_confianza_mediana,
                 tiempo_total_ms=pagina.ocr_tiempo_total_ms,
                 tiempo_ocr_ms=pagina.ocr_tiempo_ocr_ms,
                 variante_ganadora=pagina.ocr_variante_ganadora,
                 numero_intentos=pagina.ocr_numero_intentos,
-                ruido_textual=ruido_textual,
-                problemas_detectados=problemas_detectados,
-                observaciones=self._limpiar_lista(observaciones),
+                ruido_textual=pagina.ocr_ruido_textual,
+                problemas_detectados=len(observaciones),
+                dificultad=pagina.ocr_dificultad or "",
+                dificultad_nivel=pagina.ocr_dificultad_nivel,
+                dificultad_indice=pagina.ocr_dificultad_indice,
+                requiere_revision=pagina.ocr_requiere_revision,
+                observaciones=observaciones,
             )
 
             metricas.append(self.score_extraccion.puntuar_pagina(metrica))
@@ -84,32 +88,46 @@ class ComparadorResultados:
             or (resultado.texto_ocr_completo or "").strip()
         )
 
+        total_caracteres = sum(metrica.caracteres_totales for metrica in metricas_paginas)
         total_palabras = sum(metrica.cantidad_palabras for metrica in metricas_paginas)
-        confianza_positiva = [
+        palabras_baja_confianza_totales = sum(metrica.palabras_baja_confianza for metrica in metricas_paginas)
+
+        confianza_promedio_positiva = [
             metrica.confianza_ocr_promedio
             for metrica in metricas_paginas
             if metrica.confianza_ocr_promedio > 0
         ]
+        confianza_mediana_positiva = [
+            metrica.confianza_ocr_mediana
+            for metrica in metricas_paginas
+            if metrica.confianza_ocr_mediana > 0
+        ]
+
         confianza_ocr_promedio = (
-            round(sum(confianza_positiva) / len(confianza_positiva), 2)
-            if confianza_positiva
+            round(sum(confianza_promedio_positiva) / len(confianza_promedio_positiva), 2)
+            if confianza_promedio_positiva
+            else 0.0
+        )
+        confianza_ocr_mediana = (
+            round(sum(confianza_mediana_positiva) / len(confianza_mediana_positiva), 2)
+            if confianza_mediana_positiva
             else 0.0
         )
 
         ruido_textual_promedio = (
-            round(
-                sum(metrica.ruido_textual for metrica in metricas_paginas) / len(metricas_paginas),
-                4,
-            )
+            round(sum(metrica.ruido_textual for metrica in metricas_paginas) / len(metricas_paginas), 4)
             if metricas_paginas
             else 1.0
         )
 
         numero_total_intentos = sum(metrica.numero_intentos for metrica in metricas_paginas)
         problemas_detectados = sum(metrica.problemas_detectados for metrica in metricas_paginas)
-        paginas_revision_recomendada = sum(
-            1 for metrica in metricas_paginas if metrica.score_total < 55
-        )
+        paginas_revision_recomendada = sum(1 for metrica in metricas_paginas if metrica.requiere_revision)
+
+        paginas_faciles = sum(1 for metrica in metricas_paginas if metrica.dificultad == "fácil")
+        paginas_medias = sum(1 for metrica in metricas_paginas if metrica.dificultad == "media")
+        paginas_dificiles = sum(1 for metrica in metricas_paginas if metrica.dificultad == "difícil")
+        paginas_criticas = sum(1 for metrica in metricas_paginas if metrica.dificultad == "crítica")
 
         observaciones = []
         if resultado.codigo_estado_ocr in {"parcial", "error", "no_disponible"}:
@@ -124,12 +142,19 @@ class ComparadorResultados:
             paginas_con_texto_digital=paginas_con_texto_digital,
             paginas_con_ocr=paginas_con_ocr,
             total_caracteres_utiles=len(texto_fuente),
+            total_caracteres=total_caracteres,
             total_palabras=total_palabras,
+            palabras_baja_confianza_totales=palabras_baja_confianza_totales,
             confianza_ocr_promedio=confianza_ocr_promedio,
+            confianza_ocr_mediana=confianza_ocr_mediana,
             numero_total_intentos=numero_total_intentos,
             ruido_textual_promedio=ruido_textual_promedio,
             problemas_detectados=problemas_detectados,
             paginas_revision_recomendada=paginas_revision_recomendada,
+            paginas_faciles=paginas_faciles,
+            paginas_medias=paginas_medias,
+            paginas_dificiles=paginas_dificiles,
+            paginas_criticas=paginas_criticas,
             cantidad_campos_detectados=campos_detectados,
             tiempo_total_ms=getattr(resultado, "tiempo_total_ms", 0),
             observaciones=self._limpiar_lista(observaciones),
@@ -187,9 +212,9 @@ class ComparadorResultados:
             observaciones.append("Modo Básico omitió OCR porque no lo necesitó o no encontró páginas candidatas.")
         if resultado_pro.codigo_estado_ocr == "no_ejecutado":
             observaciones.append("Modo Pro no aplicó OCR porque no encontró páginas candidatas.")
-        if resultado_pro.metricas_documento_modo and resultado_pro.metricas_documento_modo.numero_total_intentos > 0:
+        if metricas_pro.numero_total_intentos > 0:
             observaciones.append(
-                f"Modo Pro realizó {resultado_pro.metricas_documento_modo.numero_total_intentos} intento(s) OCR."
+                f"Modo Pro realizó {metricas_pro.numero_total_intentos} intento(s) OCR."
             )
 
         recomendacion = resultado_pro.recomendacion_modo or resultado_basico.recomendacion_modo
@@ -241,8 +266,8 @@ class ComparadorResultados:
                 motivo = self._motivo_ganador_pagina(metrica_basico, metrica_pro, "basico")
 
             revision_manual = (
-                (metrica_basico and metrica_basico.score_total < 50)
-                and (metrica_pro and metrica_pro.score_total < 50)
+                (metrica_basico and metrica_basico.requiere_revision)
+                and (metrica_pro and metrica_pro.requiere_revision)
             )
 
             comparaciones.append(
@@ -257,6 +282,8 @@ class ComparadorResultados:
                     revision_manual_recomendada=revision_manual,
                     fuente_basico=metrica_basico.fuente_texto if metrica_basico else "-",
                     fuente_pro=metrica_pro.fuente_texto if metrica_pro else "-",
+                    dificultad_basico=metrica_basico.dificultad if metrica_basico else "-",
+                    dificultad_pro=metrica_pro.dificultad if metrica_pro else "-",
                     observaciones=self._construir_observaciones_pagina(metrica_basico, metrica_pro),
                 )
             )
@@ -276,6 +303,8 @@ class ComparadorResultados:
                 return "El modo Pro produjo un texto más legible."
             if pro.score_confianza > basico.score_confianza:
                 return "El modo Pro obtuvo mejor confianza OCR estimada."
+            if pro.paginas_criticas < basico.paginas_criticas:
+                return "El modo Pro redujo la cantidad de páginas críticas."
             return "El modo Pro logró mejor score comparativo global."
         else:
             if basico.cantidad_campos_detectados > pro.cantidad_campos_detectados:
@@ -302,6 +331,8 @@ class ComparadorResultados:
                 return "El modo Pro obtuvo mejor confianza OCR en esta página."
             if pro.score_texto_util > basico.score_texto_util + 2:
                 return "El modo Pro extrajo más texto útil en esta página."
+            if pro.dificultad_nivel < basico.dificultad_nivel:
+                return "El modo Pro redujo la dificultad estimada de esta página."
             return "El modo Pro logró mejor score total en esta página."
 
         if basico.score_velocidad > pro.score_velocidad + 8:
@@ -328,6 +359,9 @@ class ComparadorResultados:
         if basico.score_total < 50 and pro.score_total < 55:
             return True
 
+        if basico.paginas_criticas > 0 and pro.paginas_criticas > 0:
+            return True
+
         return False
 
     def _motivo_revision_manual(
@@ -342,6 +376,9 @@ class ComparadorResultados:
 
         if basico.cantidad_campos_detectados <= 2 and pro.cantidad_campos_detectados <= 2:
             return "Se recomienda revisión manual: ambos modos detectaron muy pocos campos clave."
+
+        if basico.paginas_criticas > 0 and pro.paginas_criticas > 0:
+            return "Se recomienda revisión manual: ambos modos mantienen páginas críticas."
 
         return "Se recomienda revisión manual: ambos modos quedaron con score bajo o demasiado cercano."
 

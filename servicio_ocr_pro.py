@@ -18,9 +18,8 @@ class ServicioOCRPro(ServicioOCR):
         preprocesador: PreprocesadorPro | None = None,
         evaluador: EvaluadorPagina | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__(evaluador_pagina=evaluador)
         self.preprocesador = preprocesador or PreprocesadorPro()
-        self.evaluador = evaluador or EvaluadorPagina()
 
     def ejecutar_ocr_pro(
         self,
@@ -88,11 +87,11 @@ class ServicioOCRPro(ServicioOCR):
                     pagina_pdf = documento.load_page(indice_pagina)
                     imagen_base = self.preprocesador.renderizar_pagina(pagina_pdf, zoom=2.0)
 
-                    analisis_pagina = self.evaluador.analizar_condicion_pagina(
+                    analisis_imagen = self.evaluador_pagina.analizar_condicion_pagina(
                         pagina_resultado,
                         imagen_base,
                     )
-                    variantes = construir_variantes_para_pagina(analisis_pagina)
+                    variantes = construir_variantes_para_pagina(analisis_imagen)
 
                     mejor_resultado = None
                     tiempo_ocr_acumulado = 0
@@ -103,7 +102,7 @@ class ServicioOCRPro(ServicioOCR):
                             raise ProcesoCanceladoError("Procesamiento cancelado por el usuario.")
 
                         tiempo_inicio_intento = perf_counter()
-                        imagen_tratada, observaciones_pre = self.preprocesador.aplicar_variante(
+                        imagen_tratada, _ = self.preprocesador.aplicar_variante(
                             imagen_base,
                             variante,
                             idioma_osd="osd",
@@ -123,26 +122,25 @@ class ServicioOCRPro(ServicioOCR):
                         ).strip()
                         tiempo_ocr_ms = int((perf_counter() - tiempo_inicio_ocr) * 1000)
                         tiempo_total_intento_ms = int((perf_counter() - tiempo_inicio_intento) * 1000)
+
                         tiempo_ocr_acumulado += tiempo_ocr_ms
                         intentos_realizados += 1
 
-                        evaluacion = self.evaluador.evaluar_intento(
+                        evaluacion = self.evaluador_pagina.evaluar_intento(
                             texto_ocr,
                             datos_ocr,
                             tiempo_total_ms=tiempo_total_intento_ms,
                             tiempo_ocr_ms=tiempo_ocr_ms,
-                            observaciones=analisis_pagina["observaciones"] + observaciones_pre,
+                            analisis_imagen=analisis_imagen,
+                            numero_intentos=intentos_realizados,
                         )
-
                         evaluacion["variante"] = variante
-                        evaluacion["numero_intentos"] = intentos_realizados
 
                         if mejor_resultado is None or evaluacion["score"] > mejor_resultado["score"]:
                             mejor_resultado = evaluacion
 
-                        # Si la página no parecía difícil y ya logramos buen score, no seguimos probando todo.
                         if (
-                            not analisis_pagina["es_problematica"]
+                            not analisis_imagen["es_problematica"]
                             and mejor_resultado["score"] >= 72
                         ):
                             break
@@ -156,11 +154,18 @@ class ServicioOCRPro(ServicioOCR):
                         pagina_resultado.ocr_confianza_promedio = mejor_resultado["confianza_promedio"]
                         pagina_resultado.ocr_confianza_mediana = mejor_resultado["confianza_mediana"]
                         pagina_resultado.ocr_cantidad_palabras = mejor_resultado["cantidad_palabras"]
+                        pagina_resultado.ocr_palabras_baja_confianza = mejor_resultado["palabras_baja_confianza"]
+                        pagina_resultado.ocr_caracteres_totales = mejor_resultado["caracteres_totales"]
+                        pagina_resultado.ocr_ruido_textual = mejor_resultado["ruido_textual"]
                         pagina_resultado.ocr_tiempo_total_ms = tiempo_total_pagina_ms
                         pagina_resultado.ocr_tiempo_ocr_ms = tiempo_ocr_acumulado
                         pagina_resultado.ocr_variante_ganadora = mejor_resultado["variante"].nombre
-                        pagina_resultado.ocr_numero_intentos = mejor_resultado["numero_intentos"]
+                        pagina_resultado.ocr_numero_intentos = intentos_realizados
                         pagina_resultado.ocr_score_estimado = mejor_resultado["score"]
+                        pagina_resultado.ocr_dificultad = mejor_resultado["dificultad"]
+                        pagina_resultado.ocr_dificultad_nivel = mejor_resultado["dificultad_nivel"]
+                        pagina_resultado.ocr_dificultad_indice = mejor_resultado["dificultad_indice"]
+                        pagina_resultado.ocr_requiere_revision = mejor_resultado["requiere_revision"]
                         pagina_resultado.ocr_observaciones = mejor_resultado["observaciones"]
 
                         procesadas += 1
@@ -176,7 +181,14 @@ class ServicioOCRPro(ServicioOCR):
                         pagina_resultado.ocr_tiempo_total_ms = tiempo_total_pagina_ms
                         pagina_resultado.ocr_tiempo_ocr_ms = tiempo_ocr_acumulado
                         pagina_resultado.ocr_numero_intentos = intentos_realizados
-                        pagina_resultado.ocr_observaciones = analisis_pagina["observaciones"]
+                        pagina_resultado.ocr_dificultad = "crítica"
+                        pagina_resultado.ocr_dificultad_nivel = 4
+                        pagina_resultado.ocr_dificultad_indice = 100
+                        pagina_resultado.ocr_requiere_revision = True
+                        pagina_resultado.ocr_observaciones = [
+                            "OCR vacío.",
+                            "Revisión manual recomendada.",
+                        ]
                         errores.append(f"Página {numero_visible}: no se obtuvo texto OCR utilizable.")
 
                 except ProcesoCanceladoError:
@@ -193,7 +205,14 @@ class ServicioOCRPro(ServicioOCR):
                 except Exception as error:
                     pagina_resultado.ocr_ejecutado = False
                     pagina_resultado.ocr_error = str(error)
-                    pagina_resultado.ocr_observaciones.append("Error durante OCR Pro.")
+                    pagina_resultado.ocr_dificultad = "crítica"
+                    pagina_resultado.ocr_dificultad_nivel = 4
+                    pagina_resultado.ocr_dificultad_indice = 100
+                    pagina_resultado.ocr_requiere_revision = True
+                    pagina_resultado.ocr_observaciones = [
+                        "Error durante OCR Pro.",
+                        "Revisión manual recomendada.",
+                    ]
                     errores.append(f"Página {numero_visible}: {error}")
 
             resultado.texto_ocr_completo = "\n\n".join(textos_ocr).strip()

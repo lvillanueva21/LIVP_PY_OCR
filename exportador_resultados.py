@@ -129,11 +129,18 @@ class ExportadorResultados:
                     "ocr_confianza_promedio": pagina.ocr_confianza_promedio,
                     "ocr_confianza_mediana": pagina.ocr_confianza_mediana,
                     "ocr_cantidad_palabras": pagina.ocr_cantidad_palabras,
+                    "ocr_palabras_baja_confianza": pagina.ocr_palabras_baja_confianza,
+                    "ocr_caracteres_totales": pagina.ocr_caracteres_totales,
+                    "ocr_ruido_textual": pagina.ocr_ruido_textual,
                     "ocr_tiempo_total_ms": pagina.ocr_tiempo_total_ms,
                     "ocr_tiempo_ocr_ms": pagina.ocr_tiempo_ocr_ms,
                     "ocr_variante_ganadora": pagina.ocr_variante_ganadora,
                     "ocr_numero_intentos": pagina.ocr_numero_intentos,
                     "ocr_score_estimado": pagina.ocr_score_estimado,
+                    "ocr_dificultad": pagina.ocr_dificultad,
+                    "ocr_dificultad_nivel": pagina.ocr_dificultad_nivel,
+                    "ocr_dificultad_indice": pagina.ocr_dificultad_indice,
+                    "ocr_requiere_revision": pagina.ocr_requiere_revision,
                     "ocr_observaciones": pagina.ocr_observaciones,
                 }
                 for pagina in resultado.resumen_paginas
@@ -175,7 +182,6 @@ class ExportadorResultados:
         lineas.append("RESULTADO DE ANÁLISIS DE PDF")
         lineas.append("=" * 80)
         lineas.append("")
-
         lineas.append("MODO DE ANÁLISIS")
         lineas.append("-" * 80)
         lineas.append(f"Modo ejecutado: {resultado.etiqueta_modo}")
@@ -207,58 +213,28 @@ class ExportadorResultados:
                     lineas.append(f"- {observacion}")
             lineas.append("")
 
-            if comparacion.comparaciones_paginas:
-                lineas.append("COMPARACIÓN POR PÁGINA")
-                lineas.append("-" * 80)
-                for pagina in comparacion.comparaciones_paginas:
-                    lineas.append(f"Página {pagina.numero_pagina}")
-                    lineas.append(f"  Score Básico: {pagina.score_basico}")
-                    lineas.append(f"  Score Pro: {pagina.score_pro}")
-                    lineas.append(f"  Ganador: {pagina.etiqueta_ganador}")
-                    lineas.append(f"  Motivo: {pagina.motivo}")
-                    lineas.append(
-                        f"  Revisión manual recomendada: {'Sí' if pagina.revision_manual_recomendada else 'No'}"
-                    )
-                    lineas.append(f"  Fuente Básico: {pagina.fuente_basico}")
-                    lineas.append(f"  Fuente Pro: {pagina.fuente_pro}")
-                    if pagina.observaciones:
-                        lineas.append("  Observaciones:")
-                        for observacion in pagina.observaciones:
-                            lineas.append(f"  - {observacion}")
-                    lineas.append("")
+        if resultado.metricas_documento_modo is not None:
+            metrica = resultado.metricas_documento_modo
+            lineas.append("MÉTRICAS DEL MODO MOSTRADO")
+            lineas.append("-" * 80)
+            lineas.append(f"Score total: {metrica.score_total}")
+            lineas.append(f"Score campos: {metrica.score_campos}")
+            lineas.append(f"Score legibilidad: {metrica.score_legibilidad}")
+            lineas.append(f"Score confianza: {metrica.score_confianza}")
+            lineas.append(f"Score texto útil: {metrica.score_texto_util}")
+            lineas.append(f"Score estabilidad: {metrica.score_estabilidad}")
+            lineas.append(f"Score velocidad: {metrica.score_velocidad}")
+            lineas.append(f"Confianza OCR promedio: {metrica.confianza_ocr_promedio}")
+            lineas.append(f"Confianza OCR mediana: {metrica.confianza_ocr_mediana}")
+            lineas.append(f"Palabras con baja confianza: {metrica.palabras_baja_confianza_totales}")
+            lineas.append(f"Ruido textual promedio: {metrica.ruido_textual_promedio}")
+            lineas.append(f"Páginas fáciles: {metrica.paginas_faciles}")
+            lineas.append(f"Páginas medias: {metrica.paginas_medias}")
+            lineas.append(f"Páginas difíciles: {metrica.paginas_dificiles}")
+            lineas.append(f"Páginas críticas: {metrica.paginas_criticas}")
+            lineas.append(f"Páginas con revisión sugerida: {metrica.paginas_revision_recomendada}")
+            lineas.append("")
 
-        lineas.append("MÉTRICAS DEL MODO MOSTRADO")
-        lineas.append("-" * 80)
-        lineas.append(self._texto_resumen_metrica(resultado.metricas_documento_modo))
-        lineas.append("")
-
-        return "\n".join(lineas)
-
-    def _texto_resumen_metrica(self, metrica) -> str:
-        if metrica is None:
-            return "Sin métricas disponibles."
-
-        lineas = [
-            f"Modo: {metrica.etiqueta_modo}",
-            f"Score total: {metrica.score_total}",
-            f"Score campos: {metrica.score_campos}",
-            f"Score legibilidad: {metrica.score_legibilidad}",
-            f"Score confianza: {metrica.score_confianza}",
-            f"Score texto útil: {metrica.score_texto_util}",
-            f"Score estabilidad: {metrica.score_estabilidad}",
-            f"Score velocidad: {metrica.score_velocidad}",
-            f"Campos detectados: {metrica.cantidad_campos_detectados}",
-            f"Total palabras: {metrica.total_palabras}",
-            f"Confianza OCR promedio: {metrica.confianza_ocr_promedio}",
-            f"Ruido textual promedio: {metrica.ruido_textual_promedio}",
-            f"Problemas detectados: {metrica.problemas_detectados}",
-            f"Páginas con revisión sugerida: {metrica.paginas_revision_recomendada}",
-            f"Tiempo total: {metrica.tiempo_total_ms} ms",
-        ]
-        if metrica.observaciones:
-            lineas.append("Observaciones:")
-            for observacion in metrica.observaciones:
-                lineas.append(f"- {observacion}")
         return "\n".join(lineas)
 
     def _serializar_metrica_documento(self, metrica) -> dict | None:
@@ -272,12 +248,19 @@ class ExportadorResultados:
             "paginas_con_texto_digital": metrica.paginas_con_texto_digital,
             "paginas_con_ocr": metrica.paginas_con_ocr,
             "total_caracteres_utiles": metrica.total_caracteres_utiles,
+            "total_caracteres": metrica.total_caracteres,
             "total_palabras": metrica.total_palabras,
+            "palabras_baja_confianza_totales": metrica.palabras_baja_confianza_totales,
             "confianza_ocr_promedio": metrica.confianza_ocr_promedio,
+            "confianza_ocr_mediana": metrica.confianza_ocr_mediana,
             "numero_total_intentos": metrica.numero_total_intentos,
             "ruido_textual_promedio": metrica.ruido_textual_promedio,
             "problemas_detectados": metrica.problemas_detectados,
             "paginas_revision_recomendada": metrica.paginas_revision_recomendada,
+            "paginas_faciles": metrica.paginas_faciles,
+            "paginas_medias": metrica.paginas_medias,
+            "paginas_dificiles": metrica.paginas_dificiles,
+            "paginas_criticas": metrica.paginas_criticas,
             "cantidad_campos_detectados": metrica.cantidad_campos_detectados,
             "tiempo_total_ms": metrica.tiempo_total_ms,
             "score_campos": metrica.score_campos,
@@ -299,15 +282,22 @@ class ExportadorResultados:
             "fuente_texto": metrica.fuente_texto,
             "caracteres_texto_digital": metrica.caracteres_texto_digital,
             "caracteres_texto_ocr": metrica.caracteres_texto_ocr,
+            "caracteres_totales": metrica.caracteres_totales,
             "total_caracteres_utiles": metrica.total_caracteres_utiles,
             "cantidad_palabras": metrica.cantidad_palabras,
+            "palabras_baja_confianza": metrica.palabras_baja_confianza,
             "confianza_ocr_promedio": metrica.confianza_ocr_promedio,
+            "confianza_ocr_mediana": metrica.confianza_ocr_mediana,
             "tiempo_total_ms": metrica.tiempo_total_ms,
             "tiempo_ocr_ms": metrica.tiempo_ocr_ms,
             "variante_ganadora": metrica.variante_ganadora,
             "numero_intentos": metrica.numero_intentos,
             "ruido_textual": metrica.ruido_textual,
             "problemas_detectados": metrica.problemas_detectados,
+            "dificultad": metrica.dificultad,
+            "dificultad_nivel": metrica.dificultad_nivel,
+            "dificultad_indice": metrica.dificultad_indice,
+            "requiere_revision": metrica.requiere_revision,
             "score_legibilidad": metrica.score_legibilidad,
             "score_confianza": metrica.score_confianza,
             "score_texto_util": metrica.score_texto_util,
@@ -344,6 +334,8 @@ class ExportadorResultados:
                     "revision_manual_recomendada": pagina.revision_manual_recomendada,
                     "fuente_basico": pagina.fuente_basico,
                     "fuente_pro": pagina.fuente_pro,
+                    "dificultad_basico": pagina.dificultad_basico,
+                    "dificultad_pro": pagina.dificultad_pro,
                     "observaciones": pagina.observaciones,
                 }
                 for pagina in comparacion.comparaciones_paginas

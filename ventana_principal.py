@@ -197,7 +197,7 @@ class VentanaPrincipal(QMainWindow):
         grupo_paginas = QGroupBox("Detalle por página")
         layout_paginas = QVBoxLayout(grupo_paginas)
 
-        self.tabla_paginas = QTableWidget(0, 9)
+        self.tabla_paginas = QTableWidget(0, 10)
         self.tabla_paginas.setHorizontalHeaderLabels(
             [
                 "Página",
@@ -206,6 +206,7 @@ class VentanaPrincipal(QMainWindow):
                 "Imágenes",
                 "Cobertura imagen",
                 "Diagnóstico",
+                "Dificultad",
                 "Score Básico",
                 "Score Pro",
                 "Ganador",
@@ -225,6 +226,7 @@ class VentanaPrincipal(QMainWindow):
         self.tabla_paginas.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)
         self.tabla_paginas.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeToContents)
         self.tabla_paginas.horizontalHeader().setSectionResizeMode(8, QHeaderView.ResizeToContents)
+        self.tabla_paginas.horizontalHeader().setSectionResizeMode(9, QHeaderView.ResizeToContents)
         self.tabla_paginas.horizontalHeader().setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
         layout_paginas.addWidget(self.tabla_paginas)
@@ -273,7 +275,7 @@ class VentanaPrincipal(QMainWindow):
         splitter_horizontal.addWidget(grupo_campos)
         splitter_horizontal.setStretchFactor(0, 3)
         splitter_horizontal.setStretchFactor(1, 2)
-        splitter_horizontal.setSizes([900, 420])
+        splitter_horizontal.setSizes([940, 420])
 
         layout.addWidget(splitter_horizontal, 1)
         return contenedor
@@ -1094,31 +1096,53 @@ class VentanaPrincipal(QMainWindow):
                 score_pro = f"{comparacion_pagina.score_pro:.2f}"
                 ganador_pagina = comparacion_pagina.etiqueta_ganador or "-"
 
+            dificultad = pagina.ocr_dificultad or "-"
+
             item_pagina = QTableWidgetItem(str(pagina.numero_pagina))
             item_texto = QTableWidgetItem("Sí" if pagina.tiene_texto else "No")
             item_caracteres = QTableWidgetItem(str(pagina.cantidad_caracteres))
             item_imagenes = QTableWidgetItem(str(pagina.cantidad_imagenes))
             item_cobertura = QTableWidgetItem(f"{pagina.cobertura_imagen * 100:.0f}%")
             item_diagnostico = QTableWidgetItem(f"{pagina.diagnostico} ({pagina.confianza}%)")
+            item_dificultad = QTableWidgetItem(dificultad)
             item_score_basico = QTableWidgetItem(score_basico)
             item_score_pro = QTableWidgetItem(score_pro)
             item_ganador = QTableWidgetItem(ganador_pagina)
 
-            if comparacion_pagina is not None:
-                tooltip = comparacion_pagina.motivo
-                if comparacion_pagina.revision_manual_recomendada:
-                    tooltip += "\nRevisión manual recomendada."
-                if comparacion_pagina.observaciones:
-                    tooltip += "\n" + "\n".join(comparacion_pagina.observaciones)
+            tooltip_metricas = (
+                f"Confianza OCR promedio: {pagina.ocr_confianza_promedio:.2f}\n"
+                f"Confianza OCR mediana: {pagina.ocr_confianza_mediana:.2f}\n"
+                f"Palabras detectadas: {pagina.ocr_cantidad_palabras}\n"
+                f"Palabras baja confianza: {pagina.ocr_palabras_baja_confianza}\n"
+                f"Caracteres OCR: {pagina.ocr_caracteres_totales}\n"
+                f"Tiempo página: {pagina.ocr_tiempo_total_ms} ms\n"
+                f"Intentos: {pagina.ocr_numero_intentos}\n"
+                f"Variante: {pagina.ocr_variante_ganadora or '-'}\n"
+                f"Dificultad: {pagina.ocr_dificultad or '-'}\n"
+                f"Índice dificultad: {pagina.ocr_dificultad_indice}"
+            )
 
-                item_ganador.setToolTip(tooltip)
-                item_diagnostico.setToolTip(tooltip)
+            if pagina.ocr_observaciones:
+                tooltip_metricas += "\nObservaciones:\n- " + "\n- ".join(pagina.ocr_observaciones)
+
+            item_diagnostico.setToolTip(tooltip_metricas)
+            item_dificultad.setToolTip(tooltip_metricas)
+
+            if comparacion_pagina is not None:
+                tooltip_comparacion = comparacion_pagina.motivo
+                if comparacion_pagina.revision_manual_recomendada:
+                    tooltip_comparacion += "\nRevisión manual recomendada."
+                if comparacion_pagina.observaciones:
+                    tooltip_comparacion += "\n" + "\n".join(comparacion_pagina.observaciones)
+
+                item_ganador.setToolTip(tooltip_comparacion)
 
             item_pagina.setTextAlignment(Qt.AlignCenter)
             item_texto.setTextAlignment(Qt.AlignCenter)
             item_caracteres.setTextAlignment(Qt.AlignCenter)
             item_imagenes.setTextAlignment(Qt.AlignCenter)
             item_cobertura.setTextAlignment(Qt.AlignCenter)
+            item_dificultad.setTextAlignment(Qt.AlignCenter)
             item_score_basico.setTextAlignment(Qt.AlignCenter)
             item_score_pro.setTextAlignment(Qt.AlignCenter)
             item_ganador.setTextAlignment(Qt.AlignCenter)
@@ -1129,9 +1153,10 @@ class VentanaPrincipal(QMainWindow):
             self.tabla_paginas.setItem(fila, 3, item_imagenes)
             self.tabla_paginas.setItem(fila, 4, item_cobertura)
             self.tabla_paginas.setItem(fila, 5, item_diagnostico)
-            self.tabla_paginas.setItem(fila, 6, item_score_basico)
-            self.tabla_paginas.setItem(fila, 7, item_score_pro)
-            self.tabla_paginas.setItem(fila, 8, item_ganador)
+            self.tabla_paginas.setItem(fila, 6, item_dificultad)
+            self.tabla_paginas.setItem(fila, 7, item_score_basico)
+            self.tabla_paginas.setItem(fila, 8, item_score_pro)
+            self.tabla_paginas.setItem(fila, 9, item_ganador)
 
         self._cargar_textos(resultado)
         self._cargar_campos_extraidos(resultado)

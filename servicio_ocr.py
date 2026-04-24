@@ -1,20 +1,23 @@
 from pathlib import Path
+from time import perf_counter
 
 import fitz
 import pytesseract
-from pytesseract import TesseractNotFoundError
+from pytesseract import Output, TesseractNotFoundError
 
 from etapas_proceso import ProcesoCanceladoError
+from evaluador_pagina import EvaluadorPagina
 from modelos import ResultadoAnalisisPDF
 from procesador_imagen import ProcesadorImagen
 
 
 class ServicioOCR:
-    def __init__(self) -> None:
+    def __init__(self, evaluador_pagina: EvaluadorPagina | None = None) -> None:
         self.ruta_tesseract = self._resolver_ruta_tesseract()
         pytesseract.pytesseract.tesseract_cmd = self.ruta_tesseract
         self.motor_ocr = "Tesseract OCR local"
         self.idioma_ocr = "spa+eng"
+        self.evaluador_pagina = evaluador_pagina or EvaluadorPagina()
 
     def _resolver_ruta_tesseract(self) -> str:
         rutas_candidatas = [
@@ -114,6 +117,7 @@ class ServicioOCR:
 
                 numero_visible = indice_pagina + 1
                 pagina_resultado = resultado.resumen_paginas[indice_pagina]
+                tiempo_inicio_pagina = perf_counter()
 
                 if callback:
                     progreso = 30 + int((posicion - 1) / max(1, total) * 60)
@@ -126,22 +130,62 @@ class ServicioOCR:
                     pagina_pdf = documento.load_page(indice_pagina)
                     imagen = procesador_imagen.preparar_imagen_pagina(pagina_pdf)
 
+                    analisis_imagen = self.evaluador_pagina.analizar_condicion_pagina(
+                        pagina_resultado,
+                        imagen,
+                    )
+
                     if cancelador and cancelador():
                         raise ProcesoCanceladoError("Procesamiento cancelado por el usuario.")
 
+                    tiempo_inicio_ocr = perf_counter()
+                    datos_ocr = pytesseract.image_to_data(
+                        imagen,
+                        lang=self.idioma_ocr,
+                        config="--oem 3 --psm 6",
+                        output_type=Output.DICT,
+                    )
                     texto_ocr = pytesseract.image_to_string(
                         imagen,
                         lang=self.idioma_ocr,
-                        config="--psm 6",
+                        config="--oem 3 --psm 6",
                     ).strip()
+                    tiempo_ocr_ms = int((perf_counter() - tiempo_inicio_ocr) * 1000)
+                    tiempo_total_pagina_ms = int((perf_counter() - tiempo_inicio_pagina) * 1000)
 
-                    pagina_resultado.texto_ocr = texto_ocr
+                    evaluacion = self.evaluador_pagina.evaluar_intento(
+                        texto_ocr,
+                        datos_ocr,
+                        tiempo_total_ms=tiempo_total_pagina_ms,
+                        tiempo_ocr_ms=tiempo_ocr_ms,
+                        analisis_imagen=analisis_imagen,
+                        numero_intentos=1,
+                    )
+
+                    pagina_resultado.texto_ocr = evaluacion["texto"]
                     pagina_resultado.ocr_ejecutado = True
                     pagina_resultado.ocr_error = ""
+                    pagina_resultado.ocr_confianza_promedio = evaluacion["confianza_promedio"]
+                    pagina_resultado.ocr_confianza_mediana = evaluacion["confianza_mediana"]
+                    pagina_resultado.ocr_cantidad_palabras = evaluacion["cantidad_palabras"]
+                    pagina_resultado.ocr_palabras_baja_confianza = evaluacion["palabras_baja_confianza"]
+                    pagina_resultado.ocr_caracteres_totales = evaluacion["caracteres_totales"]
+                    pagina_resultado.ocr_ruido_textual = evaluacion["ruido_textual"]
+                    pagina_resultado.ocr_tiempo_total_ms = evaluacion["tiempo_total_ms"]
+                    pagina_resultado.ocr_tiempo_ocr_ms = evaluacion["tiempo_ocr_ms"]
+                    pagina_resultado.ocr_variante_ganadora = "Básico estándar"
+                    pagina_resultado.ocr_numero_intentos = 1
+                    pagina_resultado.ocr_score_estimado = evaluacion["score"]
+                    pagina_resultado.ocr_dificultad = evaluacion["dificultad"]
+                    pagina_resultado.ocr_dificultad_nivel = evaluacion["dificultad_nivel"]
+                    pagina_resultado.ocr_dificultad_indice = evaluacion["dificultad_indice"]
+                    pagina_resultado.ocr_requiere_revision = evaluacion["requiere_revision"]
+                    pagina_resultado.ocr_observaciones = evaluacion["observaciones"]
+
                     procesadas += 1
 
-                    if texto_ocr:
-                        textos_ocr.append(f"===== PÁGINA {numero_visible} =====\n{texto_ocr}")
+                    if evaluacion["texto"]:
+                        textos_ocr.append(f"===== PÁGINA {numero_visible} =====\n{evaluacion['texto']}")
 
                 except TesseractNotFoundError:
                     resultado.codigo_estado_ocr = "no_disponible"
@@ -158,6 +202,11 @@ class ServicioOCR:
                     mensaje_error = f"Página {numero_visible}: {error}"
                     pagina_resultado.ocr_ejecutado = False
                     pagina_resultado.ocr_error = str(error)
+                    pagina_resultado.ocr_dificultad = "crítica"
+                    pagina_resultado.ocr_dificultad_nivel = 4
+                    pagina_resultado.ocr_dificultad_indice = 100
+                    pagina_resultado.ocr_requiere_revision = True
+                    pagina_resultado.ocr_observaciones = ["Error durante OCR.", "Revisión manual recomendada."]
                     errores.append(mensaje_error)
 
             resultado.texto_ocr_completo = "\n\n".join(textos_ocr).strip()

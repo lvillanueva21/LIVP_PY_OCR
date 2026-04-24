@@ -10,15 +10,22 @@ class MetricaPaginaModo:
     fuente_texto: str = "sin_texto"
     caracteres_texto_digital: int = 0
     caracteres_texto_ocr: int = 0
+    caracteres_totales: int = 0
     total_caracteres_utiles: int = 0
     cantidad_palabras: int = 0
+    palabras_baja_confianza: int = 0
     confianza_ocr_promedio: float = 0.0
+    confianza_ocr_mediana: float = 0.0
     tiempo_total_ms: int = 0
     tiempo_ocr_ms: int = 0
     variante_ganadora: str = ""
     numero_intentos: int = 0
     ruido_textual: float = 0.0
     problemas_detectados: int = 0
+    dificultad: str = ""
+    dificultad_nivel: int = 0
+    dificultad_indice: int = 0
+    requiere_revision: bool = False
     cantidad_campos_detectados: int = 0
     observaciones: List[str] = field(default_factory=list)
 
@@ -38,12 +45,19 @@ class MetricaDocumentoModo:
     paginas_con_texto_digital: int = 0
     paginas_con_ocr: int = 0
     total_caracteres_utiles: int = 0
+    total_caracteres: int = 0
     total_palabras: int = 0
+    palabras_baja_confianza_totales: int = 0
     confianza_ocr_promedio: float = 0.0
+    confianza_ocr_mediana: float = 0.0
     numero_total_intentos: int = 0
     ruido_textual_promedio: float = 0.0
     problemas_detectados: int = 0
     paginas_revision_recomendada: int = 0
+    paginas_faciles: int = 0
+    paginas_medias: int = 0
+    paginas_dificiles: int = 0
+    paginas_criticas: int = 0
     cantidad_campos_detectados: int = 0
     tiempo_total_ms: int = 0
 
@@ -70,6 +84,8 @@ class ComparacionPaginaAnalisis:
     revision_manual_recomendada: bool = False
     fuente_basico: str = "-"
     fuente_pro: str = "-"
+    dificultad_basico: str = "-"
+    dificultad_pro: str = "-"
     observaciones: List[str] = field(default_factory=list)
 
 
