@@ -77,6 +77,7 @@ class ExportadorExcel:
             ("Diagnóstico", resultado.diagnostico_general),
             ("Estado OCR", resultado.estado_ocr),
             ("Motor OCR", resultado.motor_ocr),
+            ("Fuente global de extracción", resultado.texto_fuente_extraccion or "-"),
             ("Recomendación", resultado.recomendacion_modo or "-"),
             ("Observaciones", "\n".join(resultado.observaciones_modo) if resultado.observaciones_modo else "-"),
         ]
@@ -215,7 +216,16 @@ class ExportadorExcel:
         self._ajustar_columnas(ws)
 
     def _llenar_campos_documento(self, ws, resultado) -> None:
-        encabezados = ["Campo", "Valor", "Detectado", "Estrategia"]
+        encabezados = [
+            "Campo",
+            "Valor",
+            "Detectado",
+            "Fuente exacta",
+            "Confianza estimada",
+            "Requiere revisión",
+            "Estrategia",
+            "Observación",
+        ]
         self._escribir_encabezados(ws, encabezados)
 
         fila = 2
@@ -224,7 +234,11 @@ class ExportadorExcel:
                 campo.etiqueta,
                 campo.valor or "No detectado",
                 "Sí" if campo.detectado else "No",
+                campo.fuente_exacta or "-",
+                campo.confianza_estimada if campo.detectado else "-",
+                "Sí" if campo.requiere_revision_manual else "No",
                 campo.estrategia,
+                campo.observacion or "-",
             ]
             for columna, valor in enumerate(valores, start=1):
                 ws.cell(row=fila, column=columna, value=valor)

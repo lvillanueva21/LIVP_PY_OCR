@@ -104,6 +104,10 @@ class ExportadorResultados:
                         "valor": campo.valor,
                         "detectado": campo.detectado,
                         "estrategia": campo.estrategia,
+                        "fuente_exacta": campo.fuente_exacta,
+                        "confianza_estimada": campo.confianza_estimada,
+                        "requiere_revision_manual": campo.requiere_revision_manual,
+                        "observacion": campo.observacion,
                     }
                     for campo in resultado.campos_extraidos
                 ],
@@ -229,11 +233,23 @@ class ExportadorResultados:
             lineas.append(f"Confianza OCR mediana: {metrica.confianza_ocr_mediana}")
             lineas.append(f"Palabras con baja confianza: {metrica.palabras_baja_confianza_totales}")
             lineas.append(f"Ruido textual promedio: {metrica.ruido_textual_promedio}")
-            lineas.append(f"Páginas fáciles: {metrica.paginas_faciles}")
-            lineas.append(f"Páginas medias: {metrica.paginas_medias}")
-            lineas.append(f"Páginas difíciles: {metrica.paginas_dificiles}")
-            lineas.append(f"Páginas críticas: {metrica.paginas_criticas}")
-            lineas.append(f"Páginas con revisión sugerida: {metrica.paginas_revision_recomendada}")
+            lineas.append("")
+        lineas.append("EXTRACCIÓN DE CAMPOS")
+        lineas.append("-" * 80)
+        lineas.append(f"Fuente global de extracción: {resultado.texto_fuente_extraccion or '-'}")
+
+        for campo in resultado.campos_extraidos:
+            lineas.append(f"{campo.etiqueta}: {campo.valor or 'No detectado'}")
+            lineas.append(f"  Detectado: {'Sí' if campo.detectado else 'No'}")
+            lineas.append(f"  Fuente exacta: {campo.fuente_exacta or '-'}")
+            lineas.append(f"  Estrategia: {campo.estrategia}")
+            lineas.append(
+                f"  Confianza estimada: {f'{campo.confianza_estimada:.2f}' if campo.detectado else '-'}"
+            )
+            lineas.append(
+                f"  Requiere revisión manual: {'Sí' if campo.requiere_revision_manual else 'No'}"
+            )
+            lineas.append(f"  Observación: {campo.observacion or '-'}")
             lineas.append("")
 
         return "\n".join(lineas)

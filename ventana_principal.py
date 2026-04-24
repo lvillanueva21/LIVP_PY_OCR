@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -352,12 +353,15 @@ class VentanaPrincipal(QMainWindow):
         fila_campos.addWidget(self.label_fuente_extraccion, 1)
         fila_campos.addWidget(self.boton_reextraer_campos)
 
-        self.tabla_campos = QTableWidget(0, 4)
+        self.tabla_campos = QTableWidget(0, 7)
         self.tabla_campos.setHorizontalHeaderLabels(
             [
                 "Campo",
                 "Valor",
                 "Estado",
+                "Fuente",
+                "Confianza",
+                "Revisión",
                 "Estrategia",
             ]
         )
@@ -370,6 +374,9 @@ class VentanaPrincipal(QMainWindow):
         self.tabla_campos.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.tabla_campos.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.tabla_campos.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.tabla_campos.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self.tabla_campos.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)
+        self.tabla_campos.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)
         self.tabla_campos.horizontalHeader().setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
         layout_campos.addLayout(fila_campos)
@@ -379,7 +386,7 @@ class VentanaPrincipal(QMainWindow):
         splitter_horizontal.addWidget(grupo_campos)
         splitter_horizontal.setStretchFactor(0, 3)
         splitter_horizontal.setStretchFactor(1, 2)
-        splitter_horizontal.setSizes([940, 420])
+        splitter_horizontal.setSizes([940, 500])
 
         layout.addWidget(splitter_horizontal, 1)
         return contenedor
@@ -1467,15 +1474,45 @@ class VentanaPrincipal(QMainWindow):
             fila = self.tabla_campos.rowCount()
             self.tabla_campos.insertRow(fila)
 
+            valor = campo.valor if campo.valor else "No detectado"
+            estado = "Detectado" if campo.detectado else "No detectado"
+            fuente = campo.fuente_exacta or "-"
+            confianza = f"{campo.confianza_estimada:.0f}%" if campo.detectado else "-"
+            revision = "Sí" if campo.requiere_revision_manual else "No"
+
             item_campo = QTableWidgetItem(campo.etiqueta)
-            item_valor = QTableWidgetItem(campo.valor if campo.valor else "No detectado")
-            item_estado = QTableWidgetItem("Detectado" if campo.detectado else "No detectado")
+            item_valor = QTableWidgetItem(valor)
+            item_estado = QTableWidgetItem(estado)
+            item_fuente = QTableWidgetItem(fuente)
+            item_confianza = QTableWidgetItem(confianza)
+            item_revision = QTableWidgetItem(revision)
             item_estrategia = QTableWidgetItem(campo.estrategia)
+
+            tooltip = (
+                f"Fuente exacta: {fuente}\n"
+                f"Estrategia: {campo.estrategia}\n"
+                f"Confianza estimada: {confianza}\n"
+                f"Requiere revisión manual: {revision}\n"
+                f"Observación: {campo.observacion or '-'}"
+            )
+
+            item_campo.setToolTip(tooltip)
+            item_valor.setToolTip(tooltip)
+            item_fuente.setToolTip(tooltip)
+            item_confianza.setToolTip(tooltip)
+            item_estrategia.setToolTip(tooltip)
+
+            item_estado.setTextAlignment(Qt.AlignCenter)
+            item_confianza.setTextAlignment(Qt.AlignCenter)
+            item_revision.setTextAlignment(Qt.AlignCenter)
 
             self.tabla_campos.setItem(fila, 0, item_campo)
             self.tabla_campos.setItem(fila, 1, item_valor)
             self.tabla_campos.setItem(fila, 2, item_estado)
-            self.tabla_campos.setItem(fila, 3, item_estrategia)
+            self.tabla_campos.setItem(fila, 3, item_fuente)
+            self.tabla_campos.setItem(fila, 4, item_confianza)
+            self.tabla_campos.setItem(fila, 5, item_revision)
+            self.tabla_campos.setItem(fila, 6, item_estrategia)
 
     def _actualizar_panel_modo_comparacion(self) -> None:
         modo_solicitado = self.selector_modo.currentData()

@@ -43,6 +43,10 @@ class CampoExtraido:
     valor: str = ""
     detectado: bool = False
     estrategia: str = "no_detectado"
+    fuente_exacta: str = ""
+    confianza_estimada: float = 0.0
+    requiere_revision_manual: bool = False
+    observacion: str = ""
 
 
 @dataclass

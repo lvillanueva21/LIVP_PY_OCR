@@ -118,6 +118,21 @@ class HistorialAnalisis:
                     }
                 )
 
+        campos = []
+        for campo in resultado.campos_extraidos:
+            campos.append(
+                {
+                    "campo": campo.etiqueta,
+                    "valor": campo.valor,
+                    "detectado": campo.detectado,
+                    "fuente_exacta": campo.fuente_exacta,
+                    "estrategia": campo.estrategia,
+                    "confianza_estimada": campo.confianza_estimada,
+                    "requiere_revision_manual": campo.requiere_revision_manual,
+                    "observacion": campo.observacion,
+                }
+            )
+
         return {
             "fecha_hora": datetime.now().isoformat(timespec="seconds"),
             "archivo_analizado": resultado.nombre_archivo,
@@ -132,8 +147,10 @@ class HistorialAnalisis:
             "tiempo_total_ms": resultado.tiempo_total_ms,
             "observaciones": self._limpiar_lista(observaciones),
             "revision_manual_recomendada": revision_manual,
+            "fuente_extraccion": resultado.texto_fuente_extraccion,
             "paginas": paginas,
             "comparaciones_paginas": comparaciones_paginas,
+            "campos": campos,
         }
 
     def _limpiar_lista(self, valores: list[str]) -> list[str]:
