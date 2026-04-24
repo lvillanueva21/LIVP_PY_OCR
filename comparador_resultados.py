@@ -216,6 +216,12 @@ class ComparadorResultados:
             observaciones.append(
                 f"Modo Pro realizó {metricas_pro.numero_total_intentos} intento(s) OCR."
             )
+        if getattr(resultado_pro, "paginas_ocr_forzadas", []):
+            observaciones.append(
+                f"Modo Pro se limitó a {len(resultado_pro.paginas_ocr_forzadas)} página(s) candidatas por seguridad operativa."
+            )
+        if getattr(resultado_pro, "analisis_parcial", False):
+            observaciones.append("El resultado Pro es parcial por aplicación de límites de seguridad.")
 
         recomendacion = resultado_pro.recomendacion_modo or resultado_basico.recomendacion_modo
 

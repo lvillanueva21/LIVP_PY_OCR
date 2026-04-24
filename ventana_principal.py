@@ -4,10 +4,10 @@ import fitz
 from PySide6.QtCore import Qt, QThread
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
-    QApplication,
-    QComboBox,
     QFileDialog,
-    QFrame,
+    QCheckBox,
+    QComboBox,
+    QDialog,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -19,11 +19,12 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QSpinBox,
     QSplitter,
     QStatusBar,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -145,6 +146,37 @@ class VentanaPrincipal(QMainWindow):
         fila_exportaciones.addWidget(self.boton_guardar_pdf_optimizado)
         fila_exportaciones.addStretch()
 
+        fila_limites = QHBoxLayout()
+        fila_limites.setSpacing(10)
+
+        etiqueta_reintentos = QLabel("Reintentos máx/página")
+        self.spin_limite_reintentos = QSpinBox()
+        self.spin_limite_reintentos.setRange(1, 10)
+        self.spin_limite_reintentos.setValue(4)
+
+        etiqueta_tiempo = QLabel("Tiempo máx/página")
+        self.spin_limite_tiempo = QSpinBox()
+        self.spin_limite_tiempo.setRange(3, 120)
+        self.spin_limite_tiempo.setValue(12)
+        self.spin_limite_tiempo.setSuffix(" s")
+
+        etiqueta_paginas = QLabel("Máx. páginas comparación")
+        self.spin_limite_paginas = QSpinBox()
+        self.spin_limite_paginas.setRange(3, 300)
+        self.spin_limite_paginas.setValue(20)
+
+        self.check_solo_problematicas = QCheckBox("Comparar solo páginas problemáticas")
+        self.check_solo_problematicas.setChecked(True)
+
+        fila_limites.addWidget(etiqueta_reintentos)
+        fila_limites.addWidget(self.spin_limite_reintentos)
+        fila_limites.addWidget(etiqueta_tiempo)
+        fila_limites.addWidget(self.spin_limite_tiempo)
+        fila_limites.addWidget(etiqueta_paginas)
+        fila_limites.addWidget(self.spin_limite_paginas)
+        fila_limites.addWidget(self.check_solo_problematicas)
+        fila_limites.addStretch()
+
         fila_progreso = QHBoxLayout()
         fila_progreso.setSpacing(10)
 
@@ -159,15 +191,57 @@ class VentanaPrincipal(QMainWindow):
         fila_progreso.addWidget(self.label_progreso, 1)
         fila_progreso.addWidget(self.barra_progreso, 2)
 
+        self.label_alerta_operativa = QLabel("Sin alertas operativas.")
+        self.label_alerta_operativa.setObjectName("diagnostico_secundario")
+        self.label_alerta_operativa.setWordWrap(True)
+
         etiqueta_drop = QLabel("También puedes arrastrar y soltar un PDF sobre la ventana.")
         etiqueta_drop.setObjectName("diagnostico_secundario")
 
         layout_principal.addLayout(fila_superior)
         layout_principal.addLayout(fila_exportaciones)
+        layout_principal.addLayout(fila_limites)
         layout_principal.addLayout(fila_progreso)
+        layout_principal.addWidget(self.label_alerta_operativa)
         layout_principal.addWidget(etiqueta_drop)
 
         layout_padre.addWidget(grupo)
+
+    def _obtener_limites_desde_ui(self):
+        from limites_proceso import LimitesProceso
+
+        return LimitesProceso(
+            max_reintentos_por_pagina=self.spin_limite_reintentos.value(),
+            max_tiempo_pagina_segundos=self.spin_limite_tiempo.value(),
+            max_paginas_comparacion_total=self.spin_limite_paginas.value(),
+            comparar_solo_paginas_problematicas=self.check_solo_problematicas.isChecked(),
+        )
+
+    def _habilitar_controles_operativos(self, habilitar: bool) -> None:
+        self.boton_seleccionar.setEnabled(habilitar)
+        self.selector_modo.setEnabled(habilitar)
+        self.spin_limite_reintentos.setEnabled(habilitar)
+        self.spin_limite_tiempo.setEnabled(habilitar)
+        self.spin_limite_paginas.setEnabled(habilitar)
+        self.check_solo_problematicas.setEnabled(habilitar)
+
+    def _manejar_alerta_operativa(self, mensaje: str) -> None:
+        self.label_alerta_operativa.setText(mensaje)
+        self.label_alerta_operativa.setObjectName("estado_alerta")
+        self.label_alerta_operativa.style().unpolish(self.label_alerta_operativa)
+        self.label_alerta_operativa.style().polish(self.label_alerta_operativa)
+        self._mostrar_notificacion(mensaje, "alerta")
+
+    def _manejar_detencion_seguridad(self, mensaje: str) -> None:
+        self._actualizar_progreso(0, "Análisis detenido por seguridad.")
+        self._manejar_alerta_operativa(mensaje)
+
+        if self.dialogo_progreso is not None:
+            self.dialogo_progreso.finalizar(False)
+
+        self._habilitar_controles_operativos(True)
+
+        QMessageBox.warning(self, "Detención por seguridad", mensaje)
 
     def _crear_tabs_principales(self, layout_padre: QVBoxLayout) -> None:
         self.tabs_principales = QTabWidget()
@@ -722,26 +796,52 @@ class VentanaPrincipal(QMainWindow):
             )
             return
 
+        from monitor_recursos import MonitorRecursos
+
+        limites = self._obtener_limites_desde_ui()
+        modo = self.selector_modo.currentData()
+        monitor = MonitorRecursos(limites)
+
+        evaluacion_previa = monitor.evaluar_archivo_previo(ruta_archivo, modo)
+        if evaluacion_previa["alertas"]:
+            partes = evaluacion_previa["alertas"] + evaluacion_previa["recomendaciones"]
+            mensaje = "\n".join(partes)
+
+            respuesta = QMessageBox.warning(
+                self,
+                "Documento potencialmente pesado",
+                f"{mensaje}\n\n¿Continuar con los límites actuales?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes,
+            )
+            if respuesta != QMessageBox.Yes:
+                self._mostrar_notificacion("Procesamiento cancelado antes de iniciar.", "alerta")
+                return
+
+            self._manejar_alerta_operativa(mensaje)
+
         self.input_ruta.setText(ruta_archivo)
         self._actualizar_progreso(0, "Preparando procesamiento...")
         self._mostrar_notificacion("Procesando documento seleccionado...", "alerta")
 
-        self.boton_seleccionar.setEnabled(False)
-        self.selector_modo.setEnabled(False)
+        self._habilitar_controles_operativos(False)
 
-        modo = self.selector_modo.currentData()
         self.dialogo_progreso = DialogoProgreso(ModoAnalisis.etiqueta(modo), self)
 
         self.hilo_analisis = QThread(self)
-        self.trabajador_analisis = TrabajadorAnalisis(ruta_archivo, modo)
+        self.trabajador_analisis = TrabajadorAnalisis(ruta_archivo, modo, limites)
         self.trabajador_analisis.moveToThread(self.hilo_analisis)
 
         self.hilo_analisis.started.connect(self.trabajador_analisis.ejecutar)
         self.trabajador_analisis.progreso.connect(self._actualizar_progreso)
         self.trabajador_analisis.progreso.connect(self.dialogo_progreso.actualizar_progreso)
         self.trabajador_analisis.etapa.connect(self.dialogo_progreso.actualizar_etapa)
+        self.trabajador_analisis.alerta.connect(self._manejar_alerta_operativa)
+        self.trabajador_analisis.alerta.connect(self.dialogo_progreso.mostrar_alerta_operativa)
 
         self.dialogo_progreso.solicitud_cancelar.connect(self.trabajador_analisis.cancelar)
+        self.dialogo_progreso.solicitud_pausar.connect(self.trabajador_analisis.pausar)
+        self.dialogo_progreso.solicitud_reanudar.connect(self.trabajador_analisis.reanudar)
 
         self.trabajador_analisis.finalizado.connect(self._manejar_resultado_analisis)
         self.trabajador_analisis.finalizado.connect(self.hilo_analisis.quit)
@@ -751,6 +851,9 @@ class VentanaPrincipal(QMainWindow):
 
         self.trabajador_analisis.cancelado.connect(self._manejar_cancelacion_analisis)
         self.trabajador_analisis.cancelado.connect(self.hilo_analisis.quit)
+
+        self.trabajador_analisis.detenido_seguridad.connect(self._manejar_detencion_seguridad)
+        self.trabajador_analisis.detenido_seguridad.connect(self.hilo_analisis.quit)
 
         self.hilo_analisis.finished.connect(self._limpiar_trabajo_activo)
 
@@ -770,6 +873,9 @@ class VentanaPrincipal(QMainWindow):
         self._actualizar_progreso(100, "Procesamiento completado.")
         self._mostrar_notificacion("El documento fue analizado correctamente.", "ok")
 
+        if resultado_mostrado.alertas_operativas:
+            self._manejar_alerta_operativa(resultado_mostrado.alertas_operativas[-1])
+
         try:
             self.historial_analisis.guardar_registro(
                 resultado_mostrado,
@@ -787,8 +893,7 @@ class VentanaPrincipal(QMainWindow):
         if self.dialogo_progreso is not None:
             self.dialogo_progreso.finalizar(True)
 
-        self.boton_seleccionar.setEnabled(True)
-        self.selector_modo.setEnabled(True)
+        self._habilitar_controles_operativos(True)
 
     def _manejar_error_analisis(self, mensaje: str) -> None:
         self._actualizar_progreso(0, "Error durante el análisis.")
@@ -797,8 +902,7 @@ class VentanaPrincipal(QMainWindow):
         if self.dialogo_progreso is not None:
             self.dialogo_progreso.finalizar(False)
 
-        self.boton_seleccionar.setEnabled(True)
-        self.selector_modo.setEnabled(True)
+        self._habilitar_controles_operativos(True)
 
         QMessageBox.critical(self, "Error inesperado", mensaje)
 
@@ -809,8 +913,7 @@ class VentanaPrincipal(QMainWindow):
         if self.dialogo_progreso is not None:
             self.dialogo_progreso.finalizar(False)
 
-        self.boton_seleccionar.setEnabled(True)
-        self.selector_modo.setEnabled(True)
+        self._habilitar_controles_operativos(True)
 
     def _limpiar_trabajo_activo(self) -> None:
         if self.trabajador_analisis is not None:
@@ -1497,6 +1600,10 @@ class VentanaPrincipal(QMainWindow):
         self.label_score_basico.setText("-")
         self.label_score_pro.setText("-")
         self.label_detalle_comparacion.setText("-")
+        self.label_alerta_operativa.setText("Sin alertas operativas.")
+        self.label_alerta_operativa.setObjectName("diagnostico_secundario")
+        self.label_alerta_operativa.style().unpolish(self.label_alerta_operativa)
+        self.label_alerta_operativa.style().polish(self.label_alerta_operativa)
 
         self.label_preview_pdf.setPixmap(QPixmap())
         self.label_preview_pdf.setText("Aún no hay vista previa disponible.")

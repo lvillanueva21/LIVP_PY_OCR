@@ -2,6 +2,7 @@ from time import perf_counter
 
 from analizador_pdf import AnalizadorPDF
 from comparador_resultados import ComparadorResultados
+from controlador_cancelacion import DetencionSeguridadError
 from etapas_proceso import (
     ESTADO_ADVERTENCIA,
     ESTADO_COMPLETADA,
@@ -18,8 +19,10 @@ from etapas_proceso import (
     ProcesoCanceladoError,
 )
 from extractor_poliza import ExtractorPoliza
+from limites_proceso import LimitesProceso
 from modos_analisis import ModoAnalisis
 from modelos import ResultadoAnalisisPDF
+from monitor_recursos import MonitorRecursos
 from procesador_imagen import ProcesadorImagen
 from servicio_ocr import ServicioOCR
 from servicio_ocr_pro import ServicioOCRPro
@@ -34,7 +37,12 @@ class PipelineDocumento:
         servicio_ocr_pro: ServicioOCRPro | None = None,
         extractor_poliza: ExtractorPoliza | None = None,
         comparador_resultados: ComparadorResultados | None = None,
+        limites_proceso: LimitesProceso | None = None,
+        monitor_recursos: MonitorRecursos | None = None,
     ) -> None:
+        self.limites = limites_proceso or LimitesProceso()
+        self.monitor_recursos = monitor_recursos or MonitorRecursos(self.limites)
+
         self.analizador = analizador or AnalizadorPDF()
         self.procesador_imagen = procesador_imagen or ProcesadorImagen()
         self.servicio_ocr = servicio_ocr or ServicioOCR()
@@ -47,16 +55,22 @@ class PipelineDocumento:
         ruta_archivo: str,
         callback=None,
         callback_etapa=None,
+        callback_alerta=None,
         cancelador=None,
+        controlador=None,
         modo_etiqueta: str = "Básico",
+        paginas_forzadas: list[int] | None = None,
     ) -> ResultadoAnalisisPDF:
         return self._procesar_interno(
             ruta_archivo,
             modo=ModoAnalisis.BASICO,
             callback=callback,
             callback_etapa=callback_etapa,
+            callback_alerta=callback_alerta,
             cancelador=cancelador,
+            controlador=controlador,
             modo_etiqueta=modo_etiqueta,
+            paginas_forzadas=paginas_forzadas,
         )
 
     def procesar_pro(
@@ -64,16 +78,22 @@ class PipelineDocumento:
         ruta_archivo: str,
         callback=None,
         callback_etapa=None,
+        callback_alerta=None,
         cancelador=None,
+        controlador=None,
         modo_etiqueta: str = "Pro",
+        paginas_forzadas: list[int] | None = None,
     ) -> ResultadoAnalisisPDF:
         return self._procesar_interno(
             ruta_archivo,
             modo=ModoAnalisis.PRO,
             callback=callback,
             callback_etapa=callback_etapa,
+            callback_alerta=callback_alerta,
             cancelador=cancelador,
+            controlador=controlador,
             modo_etiqueta=modo_etiqueta,
+            paginas_forzadas=paginas_forzadas,
         )
 
     def _procesar_interno(
@@ -83,13 +103,16 @@ class PipelineDocumento:
         modo: str,
         callback=None,
         callback_etapa=None,
+        callback_alerta=None,
         cancelador=None,
+        controlador=None,
         modo_etiqueta: str = "Básico",
+        paginas_forzadas: list[int] | None = None,
     ) -> ResultadoAnalisisPDF:
         inicio = perf_counter()
         es_modo_pro = modo == ModoAnalisis.PRO
 
-        self._verificar_cancelacion(cancelador)
+        self._controlar(controlador, cancelador)
         self._emitir_etapa(
             callback_etapa,
             ETAPA_INSPECCION_INICIAL,
@@ -98,6 +121,22 @@ class PipelineDocumento:
         )
         self._emitir_progreso(callback, 5, "Analizando PDF...")
         resultado = self.analizador.analizar(ruta_archivo)
+
+        evaluacion_operativa = self.monitor_recursos.evaluar_documento(resultado, modo)
+
+        resultado.alertas_operativas = self._limpiar_lista(
+            evaluacion_operativa["alertas"] + evaluacion_operativa["recomendaciones"]
+        )
+
+        for mensaje in resultado.alertas_operativas:
+            self._emitir_alerta(callback_alerta, mensaje)
+
+        if evaluacion_operativa["detener_por_seguridad"]:
+            mensaje = evaluacion_operativa["motivo_detencion"]
+            if controlador is not None:
+                controlador.detener_por_seguridad(mensaje)
+            raise DetencionSeguridadError(mensaje)
+
         self._emitir_etapa(
             callback_etapa,
             ETAPA_INSPECCION_INICIAL,
@@ -105,7 +144,7 @@ class PipelineDocumento:
             f"Documento inspeccionado correctamente. Páginas detectadas: {resultado.cantidad_paginas}.",
         )
 
-        self._verificar_cancelacion(cancelador)
+        self._controlar(controlador, cancelador)
         self._emitir_etapa(
             callback_etapa,
             ETAPA_LECTURA_TEXTO_DIGITAL,
@@ -123,7 +162,7 @@ class PipelineDocumento:
             detalle_texto,
         )
 
-        self._verificar_cancelacion(cancelador)
+        self._controlar(controlador, cancelador)
         self._emitir_etapa(
             callback_etapa,
             ETAPA_EVALUACION_OCR,
@@ -137,6 +176,17 @@ class PipelineDocumento:
 
         resultado.requiere_preprocesamiento = requiere_preprocesamiento
         resultado.acciones_preparacion = acciones_preparacion
+        resultado.paginas_ocr_forzadas = list(paginas_forzadas or [])
+
+        if resultado.paginas_ocr_forzadas and len(resultado.paginas_ocr_forzadas) < resultado.cantidad_paginas:
+            resultado.analisis_parcial = True
+            resultado.observaciones_modo.append(
+                f"Análisis parcial: OCR limitado a {len(resultado.paginas_ocr_forzadas)} página(s) candidatas."
+            )
+            self._emitir_alerta(
+                callback_alerta,
+                f"Comparación limitada a {len(resultado.paginas_ocr_forzadas)} página(s) candidatas por seguridad."
+            )
 
         servicio_activo = self.servicio_ocr_pro if es_modo_pro else self.servicio_ocr
         codigo_estado_base, estado_base, detalle_base, apto_para_ocr = servicio_activo.obtener_estado(
@@ -154,6 +204,10 @@ class PipelineDocumento:
             detalle_evaluacion += " Se probarán variantes adaptativas por página según dificultad."
         if acciones_preparacion:
             detalle_evaluacion += f" Preparación sugerida: {' | '.join(acciones_preparacion)}."
+        if resultado.paginas_ocr_forzadas:
+            detalle_evaluacion += (
+                f" OCR restringido a {len(resultado.paginas_ocr_forzadas)} página(s) por seguridad operativa."
+            )
 
         self._emitir_etapa(
             callback_etapa,
@@ -162,7 +216,7 @@ class PipelineDocumento:
             detalle_evaluacion,
         )
 
-        self._verificar_cancelacion(cancelador)
+        self._controlar(controlador, cancelador)
 
         if not resultado.apto_para_ocr:
             resultado.ocr_disponible = servicio_activo.esta_configurado()
@@ -177,6 +231,7 @@ class PipelineDocumento:
                 callback=callback,
                 callback_etapa=callback_etapa,
                 cancelador=cancelador,
+                controlador=controlador,
             )
             resultado.tiempo_total_ms = int((perf_counter() - inicio) * 1000)
             return resultado
@@ -202,6 +257,7 @@ class PipelineDocumento:
                 callback=callback,
                 callback_etapa=callback_etapa,
                 cancelador=cancelador,
+                controlador=controlador,
             )
             resultado.tiempo_total_ms = int((perf_counter() - inicio) * 1000)
             return resultado
@@ -219,6 +275,9 @@ class PipelineDocumento:
                 resultado,
                 callback=callback,
                 cancelador=cancelador,
+                controlador=controlador,
+                limites=self.limites,
+                callback_alerta=callback_alerta,
             )
         else:
             resultado = self.servicio_ocr.ejecutar_ocr(
@@ -226,6 +285,9 @@ class PipelineDocumento:
                 self.procesador_imagen,
                 callback=callback,
                 cancelador=cancelador,
+                controlador=controlador,
+                limites=self.limites,
+                callback_alerta=callback_alerta,
             )
 
         resultado.detalle_ocr = self._construir_detalle_ocr(
@@ -249,6 +311,7 @@ class PipelineDocumento:
             callback=callback,
             callback_etapa=callback_etapa,
             cancelador=cancelador,
+            controlador=controlador,
         )
         resultado.tiempo_total_ms = int((perf_counter() - inicio) * 1000)
 
@@ -265,7 +328,9 @@ class PipelineDocumento:
         modo: str,
         callback=None,
         callback_etapa=None,
+        callback_alerta=None,
         cancelador=None,
+        controlador=None,
     ) -> tuple[ResultadoAnalisisPDF, ResultadoAnalisisPDF | None, ResultadoAnalisisPDF | None, object | None]:
         self._emitir_etapa(
             callback_etapa,
@@ -285,7 +350,9 @@ class PipelineDocumento:
                 ruta_archivo,
                 callback=callback,
                 callback_etapa=callback_etapa,
+                callback_alerta=callback_alerta,
                 cancelador=cancelador,
+                controlador=controlador,
                 modo_etiqueta="Básico",
             )
             self._finalizar_modo(resultado_basico, ModoAnalisis.BASICO)
@@ -310,7 +377,9 @@ class PipelineDocumento:
                 ruta_archivo,
                 callback=callback,
                 callback_etapa=callback_etapa,
+                callback_alerta=callback_alerta,
                 cancelador=cancelador,
+                controlador=controlador,
                 modo_etiqueta="Pro",
             )
             self._finalizar_modo(resultado_pro, ModoAnalisis.PRO)
@@ -335,24 +404,36 @@ class PipelineDocumento:
             ruta_archivo,
             callback=callback_basico,
             callback_etapa=callback_etapa,
+            callback_alerta=callback_alerta,
             cancelador=cancelador,
+            controlador=controlador,
             modo_etiqueta="Básico",
         )
         self._finalizar_modo(resultado_basico, ModoAnalisis.BASICO)
 
-        self._verificar_cancelacion(cancelador)
+        self._controlar(controlador, cancelador)
+
+        paginas_para_pro, mensaje_limitacion = self._resolver_paginas_para_comparacion(resultado_basico)
+        if mensaje_limitacion:
+            self._emitir_alerta(callback_alerta, mensaje_limitacion)
 
         callback_pro = self._crear_callback_rango(callback, 48, 90, "Pro")
         resultado_pro = self.procesar_pro(
             ruta_archivo,
             callback=callback_pro,
             callback_etapa=callback_etapa,
+            callback_alerta=callback_alerta,
             cancelador=cancelador,
+            controlador=controlador,
             modo_etiqueta="Pro",
+            paginas_forzadas=paginas_para_pro,
         )
+        if mensaje_limitacion:
+            resultado_pro.observaciones_modo.append(mensaje_limitacion)
+
         self._finalizar_modo(resultado_pro, ModoAnalisis.PRO)
 
-        self._verificar_cancelacion(cancelador)
+        self._controlar(controlador, cancelador)
         self._emitir_etapa(
             callback_etapa,
             ETAPA_COMPARACION_RESULTADOS,
@@ -405,8 +486,9 @@ class PipelineDocumento:
         callback=None,
         callback_etapa=None,
         cancelador=None,
+        controlador=None,
     ) -> None:
-        self._verificar_cancelacion(cancelador)
+        self._controlar(controlador, cancelador)
         self._emitir_etapa(
             callback_etapa,
             ETAPA_CONSOLIDACION_TEXTO,
@@ -421,7 +503,7 @@ class PipelineDocumento:
             "Texto consolidado correctamente.",
         )
 
-        self._verificar_cancelacion(cancelador)
+        self._controlar(controlador, cancelador)
         self._emitir_etapa(
             callback_etapa,
             ETAPA_EXTRACCION_CAMPOS,
@@ -449,6 +531,7 @@ class PipelineDocumento:
         resultado.recomendacion_modo = recomendacion.mensaje
         resultado.observaciones_modo = self._combinar_observaciones_modo(
             resultado.observaciones_modo,
+            resultado.alertas_operativas,
             recomendacion.razones,
             [recomendacion.motivo_revision_manual] if recomendacion.motivo_revision_manual else [],
         )
@@ -457,6 +540,34 @@ class PipelineDocumento:
     def _finalizar_metricas_existentes(self, resultado: ResultadoAnalisisPDF) -> None:
         resultado.metricas_paginas_modo = self.comparador_resultados.construir_metricas_paginas(resultado)
         resultado.metricas_documento_modo = self.comparador_resultados.construir_metricas_documento(resultado)
+
+    def _resolver_paginas_para_comparacion(self, resultado_basico) -> tuple[list[int], str]:
+        total_paginas = resultado_basico.cantidad_paginas
+
+        if (
+            total_paginas <= self.limites.max_paginas_comparacion_total
+            and not self.limites.comparar_solo_paginas_problematicas
+        ):
+            return [], ""
+
+        paginas = self.monitor_recursos.seleccionar_paginas_para_comparacion(resultado_basico)
+        paginas = paginas[: self.limites.max_paginas_comparacion_total]
+
+        if not paginas:
+            return [], ""
+
+        mensaje = (
+            f"Se recomienda comparar solo páginas candidatas. "
+            f"Modo Pro limitado a {len(paginas)} página(s) prioritarias."
+        )
+
+        if not self.limites.comparar_solo_paginas_problematicas and total_paginas > self.limites.max_paginas_comparacion_total:
+            mensaje = (
+                f"El documento excede el umbral normal. "
+                f"La comparación total fue recortada a {len(paginas)} página(s) por seguridad."
+            )
+
+        return paginas, mensaje
 
     def _preparar_texto_revision(self, resultado: ResultadoAnalisisPDF) -> None:
         if resultado.texto_final_revisado.strip():
@@ -488,6 +599,14 @@ class PipelineDocumento:
                     salida.append(valor)
         return salida
 
+    def _controlar(self, controlador, cancelador) -> None:
+        if controlador is not None:
+            controlador.esperar_si_pausado()
+            controlador.verificar_estado()
+
+        if cancelador and cancelador():
+            raise ProcesoCanceladoError("Procesamiento cancelado por el usuario.")
+
     def _emitir_progreso(self, callback, valor: int, mensaje: str) -> None:
         if callback:
             callback(valor, mensaje)
@@ -495,6 +614,10 @@ class PipelineDocumento:
     def _emitir_etapa(self, callback_etapa, etapa_id: str, estado: str, detalle: str) -> None:
         if callback_etapa:
             callback_etapa(etapa_id, estado, detalle)
+
+    def _emitir_alerta(self, callback_alerta, mensaje: str) -> None:
+        if callback_alerta:
+            callback_alerta(mensaje)
 
     def _crear_callback_rango(self, callback, inicio: int, fin: int, prefijo: str):
         if callback is None:
@@ -508,6 +631,10 @@ class PipelineDocumento:
 
         return callback_rango
 
-    def _verificar_cancelacion(self, cancelador) -> None:
-        if cancelador and cancelador():
-            raise ProcesoCanceladoError("Procesamiento cancelado por el usuario.")
+    def _limpiar_lista(self, valores: list[str]) -> list[str]:
+        salida = []
+        for valor in valores:
+            valor = (valor or "").strip()
+            if valor and valor not in salida:
+                salida.append(valor)
+        return salida

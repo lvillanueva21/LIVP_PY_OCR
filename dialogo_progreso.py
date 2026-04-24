@@ -28,15 +28,18 @@ from etapas_proceso import (
 class DialogoProgreso(QDialog):
     solicitud_cancelar = Signal()
     solicitud_pausar = Signal()
+    solicitud_reanudar = Signal()
 
     def __init__(self, modo_etiqueta: str, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Procesando documento")
         self.setModal(True)
-        self.resize(900, 560)
+        self.resize(920, 600)
 
         self._finalizado = False
         self._cancelacion_solicitada = False
+        self._pausado = False
+        self._ultimo_mensaje = "Preparando procesamiento..."
         self._filas_etapas: dict[str, int] = {}
 
         self._construir_interfaz()
@@ -69,12 +72,20 @@ class DialogoProgreso(QDialog):
         self.valor_mensaje = QLabel("Preparando procesamiento...")
         self.valor_mensaje.setWordWrap(True)
 
+        etiqueta_alerta = QLabel("Alerta operativa")
+        etiqueta_alerta.setObjectName("etiqueta_seccion")
+        self.valor_alerta_operativa = QLabel("Sin alertas.")
+        self.valor_alerta_operativa.setObjectName("diagnostico_secundario")
+        self.valor_alerta_operativa.setWordWrap(True)
+
         layout_resumen.addWidget(etiqueta_modo, 0, 0)
         layout_resumen.addWidget(self.valor_modo, 0, 1)
         layout_resumen.addWidget(etiqueta_etapa_actual, 1, 0)
         layout_resumen.addWidget(self.valor_etapa_actual, 1, 1)
         layout_resumen.addWidget(etiqueta_mensaje, 2, 0)
         layout_resumen.addWidget(self.valor_mensaje, 2, 1)
+        layout_resumen.addWidget(etiqueta_alerta, 3, 0)
+        layout_resumen.addWidget(self.valor_alerta_operativa, 3, 1)
 
         self.barra_progreso = QProgressBar()
         self.barra_progreso.setRange(0, 100)
@@ -99,8 +110,8 @@ class DialogoProgreso(QDialog):
         fila_botones = QHBoxLayout()
         fila_botones.addStretch()
 
-        self.boton_pausar = QPushButton("Pausar (próximamente)")
-        self.boton_pausar.setEnabled(False)
+        self.boton_pausar = QPushButton("Pausar")
+        self.boton_pausar.clicked.connect(self._alternar_pausa)
 
         self.boton_cancelar = QPushButton("Cancelar")
         self.boton_cancelar.clicked.connect(self._solicitar_cancelacion)
@@ -137,7 +148,12 @@ class DialogoProgreso(QDialog):
 
     def actualizar_progreso(self, valor: int, mensaje: str) -> None:
         self.barra_progreso.setValue(max(0, min(100, valor)))
-        self.valor_mensaje.setText(mensaje)
+        self._ultimo_mensaje = mensaje
+        if not self._pausado:
+            self.valor_mensaje.setText(mensaje)
+
+    def mostrar_alerta_operativa(self, mensaje: str) -> None:
+        self.valor_alerta_operativa.setText(mensaje)
 
     def actualizar_etapa(self, id_etapa: str, estado: str, detalle: str) -> None:
         fila = self._filas_etapas.get(id_etapa)
@@ -160,26 +176,39 @@ class DialogoProgreso(QDialog):
                 self.valor_etapa_actual.setText(item_etapa.text())
             self.tabla_etapas.scrollToItem(item_estado)
 
-        elif estado in {ESTADO_COMPLETADA, ESTADO_OMITIDA, ESTADO_ADVERTENCIA, ESTADO_ERROR}:
-            item_etapa = self.tabla_etapas.item(fila, 0)
-            if item_etapa is not None and self.valor_etapa_actual.text() == "Esperando inicio...":
-                self.valor_etapa_actual.setText(item_etapa.text())
-
     def marcar_cancelando(self) -> None:
         if self._cancelacion_solicitada:
             return
         self._cancelacion_solicitada = True
         self.valor_mensaje.setText("Cancelación solicitada. Esperando cierre seguro de la etapa actual...")
         self.boton_cancelar.setEnabled(False)
+        self.boton_pausar.setEnabled(False)
 
     def finalizar(self, aceptado: bool = True) -> None:
         self._finalizado = True
         self.boton_cancelar.setEnabled(False)
+        self.boton_pausar.setEnabled(False)
 
         if aceptado:
             self.accept()
         else:
             self.reject()
+
+    def _alternar_pausa(self) -> None:
+        if self._finalizado or self._cancelacion_solicitada:
+            return
+
+        if self._pausado:
+            self._pausado = False
+            self.boton_pausar.setText("Pausar")
+            self.valor_mensaje.setText(self._ultimo_mensaje)
+            self.solicitud_reanudar.emit()
+            return
+
+        self._pausado = True
+        self.boton_pausar.setText("Reanudar")
+        self.valor_mensaje.setText("Procesamiento en pausa. Puedes reanudar o cancelar.")
+        self.solicitud_pausar.emit()
 
     def _solicitar_cancelacion(self) -> None:
         if self._cancelacion_solicitada:

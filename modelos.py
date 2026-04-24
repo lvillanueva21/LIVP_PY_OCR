@@ -70,8 +70,10 @@ class ResultadoAnalisisPDF:
     requiere_preprocesamiento: bool = False
     paginas_ocr_objetivo: int = 0
     paginas_ocr_procesadas: int = 0
+    paginas_ocr_forzadas: List[int] = field(default_factory=list)
     acciones_preparacion: List[str] = field(default_factory=list)
     errores_ocr: List[str] = field(default_factory=list)
+    alertas_operativas: List[str] = field(default_factory=list)
     resumen_paginas: List[ResultadoPagina] = field(default_factory=list)
     campos_extraidos: List[CampoExtraido] = field(default_factory=list)
 
@@ -80,6 +82,8 @@ class ResultadoAnalisisPDF:
     recomendacion_modo: str = ""
     observaciones_modo: List[str] = field(default_factory=list)
     es_provisional: bool = False
+    analisis_parcial: bool = False
+    motivo_detencion_seguridad: str = ""
     tiempo_total_ms: int = 0
 
     metricas_documento_modo: Any = None

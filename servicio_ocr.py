@@ -5,8 +5,10 @@ import fitz
 import pytesseract
 from pytesseract import Output, TesseractNotFoundError
 
+from controlador_cancelacion import DetencionSeguridadError
 from etapas_proceso import ProcesoCanceladoError
 from evaluador_pagina import EvaluadorPagina
+from limites_proceso import LimitesProceso
 from modelos import ResultadoAnalisisPDF
 from procesador_imagen import ProcesadorImagen
 
@@ -68,6 +70,9 @@ class ServicioOCR:
         procesador_imagen: ProcesadorImagen,
         callback=None,
         cancelador=None,
+        controlador=None,
+        limites: LimitesProceso | None = None,
+        callback_alerta=None,
     ) -> ResultadoAnalisisPDF:
         if not self.esta_configurado():
             resultado.codigo_estado_ocr = "no_disponible"
@@ -79,6 +84,7 @@ class ServicioOCR:
             resultado.ocr_disponible = False
             return resultado
 
+        limites = limites or LimitesProceso()
         self.idioma_ocr = self._obtener_idioma_ocr()
         self.motor_ocr = f"Tesseract OCR local ({self.idioma_ocr})"
         resultado.motor_ocr = self.motor_ocr
@@ -112,6 +118,10 @@ class ServicioOCR:
             total = len(paginas_objetivo)
 
             for posicion, indice_pagina in enumerate(paginas_objetivo, start=1):
+                if controlador is not None:
+                    controlador.esperar_si_pausado()
+                    controlador.verificar_estado()
+
                 if cancelador and cancelador():
                     raise ProcesoCanceladoError("Procesamiento cancelado por el usuario.")
 
@@ -135,8 +145,9 @@ class ServicioOCR:
                         imagen,
                     )
 
-                    if cancelador and cancelador():
-                        raise ProcesoCanceladoError("Procesamiento cancelado por el usuario.")
+                    if controlador is not None:
+                        controlador.esperar_si_pausado()
+                        controlador.verificar_estado()
 
                     tiempo_inicio_ocr = perf_counter()
                     datos_ocr = pytesseract.image_to_data(
@@ -162,6 +173,22 @@ class ServicioOCR:
                         numero_intentos=1,
                     )
 
+                    observaciones = list(evaluacion["observaciones"])
+                    if evaluacion["tiempo_total_ms"] > limites.max_tiempo_pagina_ms:
+                        observaciones.append("Se excedió el límite configurado de tiempo por página.")
+                        if callback_alerta:
+                            callback_alerta(
+                                f"La página {numero_visible} superó el tiempo recomendado por página."
+                            )
+                        if (
+                            limites.detener_por_seguridad
+                            and evaluacion["tiempo_total_ms"] > int(limites.max_tiempo_pagina_ms * 2.0)
+                            and controlador is not None
+                        ):
+                            controlador.detener_por_seguridad(
+                                f"El análisis fue detenido por seguridad: la página {numero_visible} excedió el límite crítico de tiempo."
+                            )
+
                     pagina_resultado.texto_ocr = evaluacion["texto"]
                     pagina_resultado.ocr_ejecutado = True
                     pagina_resultado.ocr_error = ""
@@ -181,7 +208,7 @@ class ServicioOCR:
                     pagina_resultado.ocr_dificultad_nivel = evaluacion["dificultad_nivel"]
                     pagina_resultado.ocr_dificultad_indice = evaluacion["dificultad_indice"]
                     pagina_resultado.ocr_requiere_revision = evaluacion["requiere_revision"]
-                    pagina_resultado.ocr_observaciones = evaluacion["observaciones"]
+                    pagina_resultado.ocr_observaciones = self._limpiar_observaciones(observaciones)
 
                     procesadas += 1
 
@@ -197,6 +224,8 @@ class ServicioOCR:
                     resultado.motor_ocr = "Tesseract OCR local (no disponible)"
                     resultado.ocr_disponible = False
                     return resultado
+                except DetencionSeguridadError:
+                    raise
                 except ProcesoCanceladoError:
                     raise
                 except Exception as error:
@@ -239,6 +268,9 @@ class ServicioOCR:
             documento.close()
 
     def _obtener_paginas_objetivo(self, resultado: ResultadoAnalisisPDF) -> list[int]:
+        if resultado.paginas_ocr_forzadas:
+            return sorted(set(resultado.paginas_ocr_forzadas))
+
         if resultado.codigo_diagnostico_general == "ocr_recomendado":
             return list(range(len(resultado.resumen_paginas)))
 
@@ -268,3 +300,11 @@ class ServicioOCR:
             return sorted(idiomas_disponibles)[0]
 
         return "eng"
+
+    def _limpiar_observaciones(self, observaciones: list[str]) -> list[str]:
+        salida = []
+        for observacion in observaciones:
+            observacion = (observacion or "").strip()
+            if observacion and observacion not in salida:
+                salida.append(observacion)
+        return salida
