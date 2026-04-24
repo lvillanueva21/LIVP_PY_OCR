@@ -4,6 +4,7 @@ import fitz
 import pytesseract
 from pytesseract import TesseractNotFoundError
 
+from etapas_proceso import ProcesoCanceladoError
 from modelos import ResultadoAnalisisPDF
 from procesador_imagen import ProcesadorImagen
 
@@ -63,6 +64,7 @@ class ServicioOCR:
         resultado: ResultadoAnalisisPDF,
         procesador_imagen: ProcesadorImagen,
         callback=None,
+        cancelador=None,
     ) -> ResultadoAnalisisPDF:
         if not self.esta_configurado():
             resultado.codigo_estado_ocr = "no_disponible"
@@ -107,6 +109,9 @@ class ServicioOCR:
             total = len(paginas_objetivo)
 
             for posicion, indice_pagina in enumerate(paginas_objetivo, start=1):
+                if cancelador and cancelador():
+                    raise ProcesoCanceladoError("Procesamiento cancelado por el usuario.")
+
                 numero_visible = indice_pagina + 1
                 pagina_resultado = resultado.resumen_paginas[indice_pagina]
 
@@ -120,6 +125,10 @@ class ServicioOCR:
                 try:
                     pagina_pdf = documento.load_page(indice_pagina)
                     imagen = procesador_imagen.preparar_imagen_pagina(pagina_pdf)
+
+                    if cancelador and cancelador():
+                        raise ProcesoCanceladoError("Procesamiento cancelado por el usuario.")
+
                     texto_ocr = pytesseract.image_to_string(
                         imagen,
                         lang=self.idioma_ocr,
@@ -143,6 +152,8 @@ class ServicioOCR:
                     resultado.motor_ocr = "Tesseract OCR local (no disponible)"
                     resultado.ocr_disponible = False
                     return resultado
+                except ProcesoCanceladoError:
+                    raise
                 except Exception as error:
                     mensaje_error = f"Página {numero_visible}: {error}"
                     pagina_resultado.ocr_ejecutado = False

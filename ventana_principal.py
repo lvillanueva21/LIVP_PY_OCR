@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import fitz
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -28,21 +28,25 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from dialogo_progreso import DialogoProgreso
 from exportador_resultados import ExportadorResultados
 from modos_analisis import ModoAnalisis
-from pipeline_documento import PipelineDocumento
+from trabajador_analisis import TrabajadorAnalisis
 
 
 class VentanaPrincipal(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.pipeline = PipelineDocumento()
         self.exportador = ExportadorResultados()
         self.resultado_actual = None
         self.resultado_basico_actual = None
         self.resultado_pro_actual = None
         self.comparacion_actual = None
         self.pixmap_preview_original = None
+
+        self.hilo_analisis: QThread | None = None
+        self.trabajador_analisis: TrabajadorAnalisis | None = None
+        self.dialogo_progreso: DialogoProgreso | None = None
 
         self.setWindowTitle("Analizador de PDFs")
         self.resize(1260, 960)
@@ -188,14 +192,21 @@ class VentanaPrincipal(QMainWindow):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(16)
 
-        splitter_vertical = QSplitter(Qt.Vertical)
+        splitter_horizontal = QSplitter(Qt.Horizontal)
 
         grupo_paginas = QGroupBox("Detalle por página")
         layout_paginas = QVBoxLayout(grupo_paginas)
 
         self.tabla_paginas = QTableWidget(0, 6)
         self.tabla_paginas.setHorizontalHeaderLabels(
-            ["Página", "Texto", "Caracteres", "Imágenes", "Cobertura imagen", "Diagnóstico"]
+            [
+                "Página",
+                "Texto",
+                "Caracteres",
+                "Imágenes",
+                "Cobertura imagen",
+                "Diagnóstico",
+            ]
         )
         self.tabla_paginas.verticalHeader().setVisible(False)
         self.tabla_paginas.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -230,7 +241,14 @@ class VentanaPrincipal(QMainWindow):
         fila_campos.addWidget(self.boton_reextraer_campos)
 
         self.tabla_campos = QTableWidget(0, 4)
-        self.tabla_campos.setHorizontalHeaderLabels(["Campo", "Valor", "Estado", "Estrategia"])
+        self.tabla_campos.setHorizontalHeaderLabels(
+            [
+                "Campo",
+                "Valor",
+                "Estado",
+                "Estrategia",
+            ]
+        )
         self.tabla_campos.verticalHeader().setVisible(False)
         self.tabla_campos.setEditTriggers(QTableWidget.NoEditTriggers)
         self.tabla_campos.setSelectionBehavior(QTableWidget.SelectRows)
@@ -245,11 +263,13 @@ class VentanaPrincipal(QMainWindow):
         layout_campos.addLayout(fila_campos)
         layout_campos.addWidget(self.tabla_campos)
 
-        splitter_vertical.addWidget(grupo_paginas)
-        splitter_vertical.addWidget(grupo_campos)
-        splitter_vertical.setSizes([430, 240])
+        splitter_horizontal.addWidget(grupo_paginas)
+        splitter_horizontal.addWidget(grupo_campos)
+        splitter_horizontal.setStretchFactor(0, 3)
+        splitter_horizontal.setStretchFactor(1, 2)
+        splitter_horizontal.setSizes([780, 520])
 
-        layout.addWidget(splitter_vertical, 1)
+        layout.addWidget(splitter_horizontal, 1)
         return contenedor
 
     def _crear_panel_preview_pdf(self) -> QGroupBox:
@@ -656,51 +676,100 @@ class VentanaPrincipal(QMainWindow):
         self._procesar_pdf(ruta_archivo)
 
     def _procesar_pdf(self, ruta_archivo: str) -> None:
-        self.input_ruta.setText(ruta_archivo)
-        self._actualizar_progreso(0, "Iniciando procesamiento...")
-        self._mostrar_notificacion("Procesando documento seleccionado...", "alerta")
-        self.boton_seleccionar.setEnabled(False)
-
-        try:
-            modo = self.selector_modo.currentData()
-            resultado_mostrado, resultado_basico, resultado_pro, comparacion = self.pipeline.procesar_segun_modo(
-                ruta_archivo,
-                modo,
-                callback=self._actualizar_progreso,
+        if self.hilo_analisis is not None and self.hilo_analisis.isRunning():
+            QMessageBox.information(
+                self,
+                "Procesamiento en curso",
+                "Ya existe un procesamiento activo. Espera a que termine o cancélalo.",
             )
+            return
 
-            self.resultado_actual = resultado_mostrado
-            self.resultado_basico_actual = resultado_basico
-            self.resultado_pro_actual = resultado_pro
-            self.comparacion_actual = comparacion
+        self.input_ruta.setText(ruta_archivo)
+        self._actualizar_progreso(0, "Preparando procesamiento...")
+        self._mostrar_notificacion("Procesando documento seleccionado...", "alerta")
 
-            self._mostrar_resultado(resultado_mostrado)
-            self._actualizar_preview_pdf(ruta_archivo)
-            self._actualizar_estado_exportacion(True)
-            self.boton_reextraer_campos.setEnabled(True)
-            self._actualizar_progreso(100, "Procesamiento completado.")
-            self._mostrar_notificacion("El documento fue analizado correctamente.", "ok")
-        except FileNotFoundError as error:
-            self.resultado_actual = None
-            self._limpiar_resultados()
-            self._actualizar_progreso(0, "No se pudo localizar el archivo.")
-            self._mostrar_notificacion(str(error), "error")
-            QMessageBox.warning(self, "Archivo no válido", str(error))
-        except ValueError as error:
-            self.resultado_actual = None
-            self._limpiar_resultados()
-            self._actualizar_progreso(0, "El PDF no pudo analizarse.")
-            self._mostrar_notificacion(str(error), "error")
-            QMessageBox.critical(self, "Error al analizar PDF", str(error))
-        except Exception as error:
-            self.resultado_actual = None
-            self._limpiar_resultados()
-            mensaje = f"Ocurrió un error inesperado: {error}"
-            self._actualizar_progreso(0, "Error inesperado durante el análisis.")
-            self._mostrar_notificacion(mensaje, "error")
-            QMessageBox.critical(self, "Error inesperado", mensaje)
-        finally:
-            self.boton_seleccionar.setEnabled(True)
+        self.boton_seleccionar.setEnabled(False)
+        self.selector_modo.setEnabled(False)
+
+        modo = self.selector_modo.currentData()
+        self.dialogo_progreso = DialogoProgreso(ModoAnalisis.etiqueta(modo), self)
+
+        self.hilo_analisis = QThread(self)
+        self.trabajador_analisis = TrabajadorAnalisis(ruta_archivo, modo)
+        self.trabajador_analisis.moveToThread(self.hilo_analisis)
+
+        self.hilo_analisis.started.connect(self.trabajador_analisis.ejecutar)
+        self.trabajador_analisis.progreso.connect(self._actualizar_progreso)
+        self.trabajador_analisis.progreso.connect(self.dialogo_progreso.actualizar_progreso)
+        self.trabajador_analisis.etapa.connect(self.dialogo_progreso.actualizar_etapa)
+
+        self.dialogo_progreso.solicitud_cancelar.connect(self.trabajador_analisis.cancelar)
+
+        self.trabajador_analisis.finalizado.connect(self._manejar_resultado_analisis)
+        self.trabajador_analisis.finalizado.connect(self.hilo_analisis.quit)
+
+        self.trabajador_analisis.error.connect(self._manejar_error_analisis)
+        self.trabajador_analisis.error.connect(self.hilo_analisis.quit)
+
+        self.trabajador_analisis.cancelado.connect(self._manejar_cancelacion_analisis)
+        self.trabajador_analisis.cancelado.connect(self.hilo_analisis.quit)
+
+        self.hilo_analisis.finished.connect(self._limpiar_trabajo_activo)
+
+        self.hilo_analisis.start()
+        self.dialogo_progreso.exec()
+
+    def _manejar_resultado_analisis(self, resultado_mostrado, resultado_basico, resultado_pro, comparacion) -> None:
+        self.resultado_actual = resultado_mostrado
+        self.resultado_basico_actual = resultado_basico
+        self.resultado_pro_actual = resultado_pro
+        self.comparacion_actual = comparacion
+
+        self._mostrar_resultado(resultado_mostrado)
+        self._actualizar_preview_pdf(resultado_mostrado.ruta_archivo)
+        self._actualizar_estado_exportacion(True)
+        self.boton_reextraer_campos.setEnabled(True)
+        self._actualizar_progreso(100, "Procesamiento completado.")
+        self._mostrar_notificacion("El documento fue analizado correctamente.", "ok")
+
+        if self.dialogo_progreso is not None:
+            self.dialogo_progreso.finalizar(True)
+
+        self.boton_seleccionar.setEnabled(True)
+        self.selector_modo.setEnabled(True)
+
+    def _manejar_error_analisis(self, mensaje: str) -> None:
+        self._actualizar_progreso(0, "Error durante el análisis.")
+        self._mostrar_notificacion(mensaje, "error")
+
+        if self.dialogo_progreso is not None:
+            self.dialogo_progreso.finalizar(False)
+
+        self.boton_seleccionar.setEnabled(True)
+        self.selector_modo.setEnabled(True)
+
+        QMessageBox.critical(self, "Error inesperado", mensaje)
+
+    def _manejar_cancelacion_analisis(self, mensaje: str) -> None:
+        self._actualizar_progreso(0, "Procesamiento cancelado.")
+        self._mostrar_notificacion(mensaje, "alerta")
+
+        if self.dialogo_progreso is not None:
+            self.dialogo_progreso.finalizar(False)
+
+        self.boton_seleccionar.setEnabled(True)
+        self.selector_modo.setEnabled(True)
+
+    def _limpiar_trabajo_activo(self) -> None:
+        if self.trabajador_analisis is not None:
+            self.trabajador_analisis.deleteLater()
+            self.trabajador_analisis = None
+
+        if self.hilo_analisis is not None:
+            self.hilo_analisis.deleteLater()
+            self.hilo_analisis = None
+
+        self.dialogo_progreso = None
 
     def _actualizar_preview_pdf(self, ruta_archivo: str) -> None:
         self.pixmap_preview_original = None
@@ -762,8 +831,12 @@ class VentanaPrincipal(QMainWindow):
             return
 
         self._sincronizar_texto_revisado()
+
         try:
-            self.pipeline.reextraer_campos(self.resultado_actual, callback=self._actualizar_progreso)
+            from pipeline_documento import PipelineDocumento
+
+            pipeline = PipelineDocumento()
+            pipeline.reextraer_campos(self.resultado_actual, callback=self._actualizar_progreso)
             self._cargar_campos_extraidos(self.resultado_actual)
             self._actualizar_panel_modo_comparacion()
             self._mostrar_notificacion("Campos reextraídos desde el texto revisado.", "ok")

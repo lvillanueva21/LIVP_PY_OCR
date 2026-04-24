@@ -3,6 +3,21 @@ from time import perf_counter
 
 from analizador_pdf import AnalizadorPDF
 from comparador_analisis import ComparadorAnalisis
+from etapas_proceso import (
+    ESTADO_ADVERTENCIA,
+    ESTADO_COMPLETADA,
+    ESTADO_EN_CURSO,
+    ESTADO_OMITIDA,
+    ETAPA_COMPARACION_RESULTADOS,
+    ETAPA_CONSOLIDACION_TEXTO,
+    ETAPA_EVALUACION_OCR,
+    ETAPA_EXTRACCION_CAMPOS,
+    ETAPA_FINALIZACION,
+    ETAPA_INSPECCION_INICIAL,
+    ETAPA_LECTURA_TEXTO_DIGITAL,
+    ETAPA_OCR,
+    ProcesoCanceladoError,
+)
 from extractor_poliza import ExtractorPoliza
 from modos_analisis import ModoAnalisis
 from modelos import ResultadoAnalisisPDF
@@ -25,12 +40,57 @@ class PipelineDocumento:
         self.extractor_poliza = extractor_poliza or ExtractorPoliza()
         self.comparador_analisis = comparador_analisis or ComparadorAnalisis()
 
-    def procesar(self, ruta_archivo: str, callback=None) -> ResultadoAnalisisPDF:
+    def procesar(
+        self,
+        ruta_archivo: str,
+        callback=None,
+        callback_etapa=None,
+        cancelador=None,
+        modo_etiqueta: str = "Básico",
+    ) -> ResultadoAnalisisPDF:
         inicio = perf_counter()
 
+        self._verificar_cancelacion(cancelador)
+        self._emitir_etapa(
+            callback_etapa,
+            ETAPA_INSPECCION_INICIAL,
+            ESTADO_EN_CURSO,
+            f"Abriendo PDF y preparando análisis en modo {modo_etiqueta}.",
+        )
         self._emitir_progreso(callback, 5, "Analizando PDF...")
         resultado = self.analizador.analizar(ruta_archivo)
+        self._emitir_etapa(
+            callback_etapa,
+            ETAPA_INSPECCION_INICIAL,
+            ESTADO_COMPLETADA,
+            f"Documento inspeccionado correctamente. Páginas detectadas: {resultado.cantidad_paginas}.",
+        )
 
+        self._verificar_cancelacion(cancelador)
+        self._emitir_etapa(
+            callback_etapa,
+            ETAPA_LECTURA_TEXTO_DIGITAL,
+            ESTADO_EN_CURSO,
+            "Revisando texto digital disponible y diagnóstico inicial.",
+        )
+        if resultado.tiene_texto_digital:
+            detalle_texto = "Se encontró texto digital suficiente en el documento."
+        else:
+            detalle_texto = "No se encontró texto digital suficiente; se evaluará OCR."
+        self._emitir_etapa(
+            callback_etapa,
+            ETAPA_LECTURA_TEXTO_DIGITAL,
+            ESTADO_COMPLETADA,
+            detalle_texto,
+        )
+
+        self._verificar_cancelacion(cancelador)
+        self._emitir_etapa(
+            callback_etapa,
+            ETAPA_EVALUACION_OCR,
+            ESTADO_EN_CURSO,
+            "Evaluando necesidad de OCR y preparación de imagen.",
+        )
         self._emitir_progreso(callback, 20, "Evaluando estrategia de OCR...")
         requiere_preprocesamiento, acciones_preparacion = self.procesador_imagen.evaluar_preparacion(
             resultado
@@ -49,12 +109,33 @@ class PipelineDocumento:
         resultado.apto_para_ocr = apto_para_ocr
         resultado.motor_ocr = self.servicio_ocr.motor_ocr
 
+        detalle_evaluacion = detalle_base
+        if acciones_preparacion:
+            detalle_evaluacion += f" Preparación sugerida: {' | '.join(acciones_preparacion)}."
+        self._emitir_etapa(
+            callback_etapa,
+            ETAPA_EVALUACION_OCR,
+            ESTADO_COMPLETADA,
+            detalle_evaluacion,
+        )
+
+        self._verificar_cancelacion(cancelador)
+
         if not resultado.apto_para_ocr:
             resultado.ocr_disponible = self.servicio_ocr.esta_configurado()
-            self._preparar_texto_revision(resultado)
-            self._extraer_campos(resultado, callback)
+            self._emitir_etapa(
+                callback_etapa,
+                ETAPA_OCR,
+                ESTADO_OMITIDA,
+                "OCR omitido: el documento ya tiene texto digital suficiente o no lo requiere.",
+            )
+            self._consolidar_y_extraer(
+                resultado,
+                callback=callback,
+                callback_etapa=callback_etapa,
+                cancelador=cancelador,
+            )
             resultado.tiempo_total_ms = int((perf_counter() - inicio) * 1000)
-            self._emitir_progreso(callback, 100, "Análisis completado. OCR no requerido.")
             return resultado
 
         if not self.servicio_ocr.esta_configurado():
@@ -66,17 +147,34 @@ class PipelineDocumento:
             )
             resultado.motor_ocr = self.servicio_ocr.motor_ocr
             resultado.ocr_disponible = False
-            self._preparar_texto_revision(resultado)
-            self._extraer_campos(resultado, callback)
+
+            self._emitir_etapa(
+                callback_etapa,
+                ETAPA_OCR,
+                ESTADO_ADVERTENCIA,
+                "OCR omitido: Tesseract no está disponible en el sistema.",
+            )
+            self._consolidar_y_extraer(
+                resultado,
+                callback=callback,
+                callback_etapa=callback_etapa,
+                cancelador=cancelador,
+            )
             resultado.tiempo_total_ms = int((perf_counter() - inicio) * 1000)
-            self._emitir_progreso(callback, 100, "Análisis completado. OCR no disponible.")
             return resultado
 
+        self._emitir_etapa(
+            callback_etapa,
+            ETAPA_OCR,
+            ESTADO_EN_CURSO,
+            f"Ejecutando OCR en modo {modo_etiqueta}.",
+        )
         self._emitir_progreso(callback, 28, "Preparando OCR local...")
         resultado = self.servicio_ocr.ejecutar_ocr(
             resultado,
             self.procesador_imagen,
             callback=callback,
+            cancelador=cancelador,
         )
 
         resultado.detalle_ocr = self._construir_detalle_ocr(
@@ -84,60 +182,150 @@ class PipelineDocumento:
             acciones_preparacion,
         )
 
-        self._preparar_texto_revision(resultado)
-        self._extraer_campos(resultado, callback)
+        estado_ocr_etapa = ESTADO_COMPLETADA
+        if resultado.codigo_estado_ocr in {"parcial", "no_disponible"}:
+            estado_ocr_etapa = ESTADO_ADVERTENCIA
+        elif resultado.codigo_estado_ocr == "error":
+            estado_ocr_etapa = ESTADO_ADVERTENCIA
+
+        self._emitir_etapa(
+            callback_etapa,
+            ETAPA_OCR,
+            estado_ocr_etapa,
+            resultado.detalle_ocr,
+        )
+
+        self._consolidar_y_extraer(
+            resultado,
+            callback=callback,
+            callback_etapa=callback_etapa,
+            cancelador=cancelador,
+        )
         resultado.tiempo_total_ms = int((perf_counter() - inicio) * 1000)
-
-        mensaje_final = "Procesamiento completado."
-        if resultado.codigo_estado_ocr == "ejecutado":
-            mensaje_final = "Procesamiento completado con OCR."
-        elif resultado.codigo_estado_ocr == "parcial":
-            mensaje_final = "Procesamiento completado con OCR y observaciones."
-        elif resultado.codigo_estado_ocr in {"error", "no_disponible"}:
-            mensaje_final = "Procesamiento completado con incidencias OCR."
-
-        self._emitir_progreso(callback, 100, mensaje_final)
         return resultado
 
-    def procesar_segun_modo(self, ruta_archivo: str, modo: str, callback=None) -> tuple[
-        ResultadoAnalisisPDF,
-        ResultadoAnalisisPDF | None,
-        ResultadoAnalisisPDF | None,
-        object | None,
-    ]:
+    def procesar_segun_modo(
+        self,
+        ruta_archivo: str,
+        modo: str,
+        callback=None,
+        callback_etapa=None,
+        cancelador=None,
+    ) -> tuple[ResultadoAnalisisPDF, ResultadoAnalisisPDF | None, ResultadoAnalisisPDF | None, object | None]:
+        self._emitir_etapa(
+            callback_etapa,
+            ETAPA_COMPARACION_RESULTADOS,
+            ESTADO_OMITIDA,
+            "Comparación aún no ejecutada.",
+        )
+        self._emitir_etapa(
+            callback_etapa,
+            ETAPA_FINALIZACION,
+            ESTADO_OMITIDA,
+            "Finalización pendiente.",
+        )
+
         if modo == ModoAnalisis.BASICO:
-            resultado_basico = self.procesar(ruta_archivo, callback=callback)
+            resultado_basico = self.procesar(
+                ruta_archivo,
+                callback=callback,
+                callback_etapa=callback_etapa,
+                cancelador=cancelador,
+                modo_etiqueta="Básico",
+            )
             self._finalizar_modo(resultado_basico, ModoAnalisis.BASICO)
+
+            self._emitir_etapa(
+                callback_etapa,
+                ETAPA_COMPARACION_RESULTADOS,
+                ESTADO_OMITIDA,
+                "Comparación omitida: solo se ejecutó el modo Básico.",
+            )
+            self._emitir_etapa(
+                callback_etapa,
+                ETAPA_FINALIZACION,
+                ESTADO_COMPLETADA,
+                "Procesamiento en modo Básico completado.",
+            )
+            self._emitir_progreso(callback, 100, "Procesamiento completado.")
             return resultado_basico, resultado_basico, None, None
 
         if modo == ModoAnalisis.PRO:
-            callback_basico = self._crear_callback_rango(callback, 0, 85, "Base")
-            resultado_base = self.procesar(ruta_archivo, callback=callback_basico)
+            resultado_base = self.procesar(
+                ruta_archivo,
+                callback=callback,
+                callback_etapa=callback_etapa,
+                cancelador=cancelador,
+                modo_etiqueta="Pro",
+            )
+            self._verificar_cancelacion(cancelador)
+
             resultado_pro = self._crear_resultado_provisional(resultado_base)
-            self._emitir_progreso(callback, 92, "Preparando modo Pro estructural...")
             self._finalizar_modo(resultado_pro, ModoAnalisis.PRO)
-            self._emitir_progreso(callback, 100, "Modo Pro estructural completado.")
+
+            self._emitir_etapa(
+                callback_etapa,
+                ETAPA_COMPARACION_RESULTADOS,
+                ESTADO_OMITIDA,
+                "Comparación omitida: solo se ejecutó el modo Pro.",
+            )
+            self._emitir_etapa(
+                callback_etapa,
+                ETAPA_FINALIZACION,
+                ESTADO_COMPLETADA,
+                "Procesamiento en modo Pro estructural completado.",
+            )
+            self._emitir_progreso(callback, 100, "Procesamiento completado.")
             return resultado_pro, None, resultado_pro, None
 
-        callback_basico = self._crear_callback_rango(callback, 0, 72, "Básico")
-        resultado_basico = self.procesar(ruta_archivo, callback=callback_basico)
+        callback_basico = self._crear_callback_rango(callback, 0, 78, "Básico")
+        resultado_basico = self.procesar(
+            ruta_archivo,
+            callback=callback_basico,
+            callback_etapa=callback_etapa,
+            cancelador=cancelador,
+            modo_etiqueta="Básico",
+        )
         self._finalizar_modo(resultado_basico, ModoAnalisis.BASICO)
 
-        self._emitir_progreso(callback, 78, "Construyendo resultado Pro estructural...")
+        self._verificar_cancelacion(cancelador)
+        self._emitir_etapa(
+            callback_etapa,
+            ETAPA_COMPARACION_RESULTADOS,
+            ESTADO_EN_CURSO,
+            "Construyendo resultado Pro provisional y calculando comparación.",
+        )
+        self._emitir_progreso(callback, 86, "Preparando comparación de resultados...")
+
         resultado_pro = self._crear_resultado_provisional(resultado_basico)
         self._finalizar_modo(resultado_pro, ModoAnalisis.PRO)
 
-        self._emitir_progreso(callback, 90, "Comparando resultados...")
         comparacion = self.comparador_analisis.comparar(resultado_basico, resultado_pro)
-
         resultado_basico.comparacion_modos = comparacion
         resultado_pro.comparacion_modos = comparacion
+
+        detalle_comparacion = comparacion.motivo or "Comparación completada."
+        if comparacion.observaciones:
+            detalle_comparacion += f" {' | '.join(comparacion.observaciones)}"
+
+        self._emitir_etapa(
+            callback_etapa,
+            ETAPA_COMPARACION_RESULTADOS,
+            ESTADO_COMPLETADA,
+            detalle_comparacion,
+        )
+        self._emitir_etapa(
+            callback_etapa,
+            ETAPA_FINALIZACION,
+            ESTADO_COMPLETADA,
+            "Comparación de modos completada.",
+        )
+        self._emitir_progreso(callback, 100, "Procesamiento completado.")
 
         resultado_mostrado = resultado_basico
         if comparacion.modo_ganador == ModoAnalisis.PRO:
             resultado_mostrado = resultado_pro
 
-        self._emitir_progreso(callback, 100, "Comparación completada.")
         return resultado_mostrado, resultado_basico, resultado_pro, comparacion
 
     def reextraer_campos(self, resultado: ResultadoAnalisisPDF, callback=None) -> ResultadoAnalisisPDF:
@@ -146,6 +334,47 @@ class PipelineDocumento:
         self._finalizar_metricas_existentes(resultado)
         self._emitir_progreso(callback, 100, "Campos reextraídos correctamente.")
         return resultado
+
+    def _consolidar_y_extraer(
+        self,
+        resultado: ResultadoAnalisisPDF,
+        *,
+        callback=None,
+        callback_etapa=None,
+        cancelador=None,
+    ) -> None:
+        self._verificar_cancelacion(cancelador)
+        self._emitir_etapa(
+            callback_etapa,
+            ETAPA_CONSOLIDACION_TEXTO,
+            ESTADO_EN_CURSO,
+            "Consolidando texto base para revisión manual.",
+        )
+        self._preparar_texto_revision(resultado)
+        self._emitir_etapa(
+            callback_etapa,
+            ETAPA_CONSOLIDACION_TEXTO,
+            ESTADO_COMPLETADA,
+            "Texto consolidado correctamente.",
+        )
+
+        self._verificar_cancelacion(cancelador)
+        self._emitir_etapa(
+            callback_etapa,
+            ETAPA_EXTRACCION_CAMPOS,
+            ESTADO_EN_CURSO,
+            "Extrayendo campos básicos de póliza.",
+        )
+        self._emitir_progreso(callback, 85, "Extrayendo campos básicos de póliza...")
+        self.extractor_poliza.extraer(resultado)
+
+        campos_detectados = sum(1 for campo in resultado.campos_extraidos if campo.detectado)
+        self._emitir_etapa(
+            callback_etapa,
+            ETAPA_EXTRACCION_CAMPOS,
+            ESTADO_COMPLETADA,
+            f"Extracción completada. Campos detectados: {campos_detectados}.",
+        )
 
     def _finalizar_modo(self, resultado: ResultadoAnalisisPDF, modo: str) -> None:
         resultado.modo_analisis = modo
@@ -165,10 +394,6 @@ class PipelineDocumento:
             "Modo Pro provisional: en esta fase aún reutiliza el flujo del modo Básico."
         )
         return resultado_pro
-
-    def _extraer_campos(self, resultado: ResultadoAnalisisPDF, callback=None) -> None:
-        self._emitir_progreso(callback, 85, "Extrayendo campos básicos de póliza...")
-        self.extractor_poliza.extraer(resultado)
 
     def _preparar_texto_revision(self, resultado: ResultadoAnalisisPDF) -> None:
         if resultado.texto_final_revisado.strip():
@@ -195,6 +420,10 @@ class PipelineDocumento:
         if callback:
             callback(valor, mensaje)
 
+    def _emitir_etapa(self, callback_etapa, etapa_id: str, estado: str, detalle: str) -> None:
+        if callback_etapa:
+            callback_etapa(etapa_id, estado, detalle)
+
     def _crear_callback_rango(self, callback, inicio: int, fin: int, prefijo: str):
         if callback is None:
             return None
@@ -206,3 +435,7 @@ class PipelineDocumento:
             callback(valor_ajustado, f"{prefijo}: {mensaje}")
 
         return callback_rango
+
+    def _verificar_cancelacion(self, cancelador) -> None:
+        if cancelador and cancelador():
+            raise ProcesoCanceladoError("Procesamiento cancelado por el usuario.")
